@@ -4,6 +4,10 @@ import cors from "@fastify/cors";
 import { authRoutes } from "./routes/auth";
 import { orderRoutes } from "./routes/orders";
 import { productRoutes } from "./routes/products";
+import { channelsRoutes } from "./routes/channels";
+import { shopifyRoutes } from "./routes/shopify";
+import { erpRoutes } from "./routes/erp";
+import { syncRoutes } from "./routes/sync";
 
 dotenv.config();
 
@@ -20,6 +24,10 @@ app.get("/health", async () => {
 authRoutes(app);
 orderRoutes(app);
 productRoutes(app);
+channelsRoutes(app);
+shopifyRoutes(app);
+erpRoutes(app);
+syncRoutes(app);
 
 const port = Number(process.env.PORT) || 4000;
 
