@@ -12,8 +12,30 @@ function getUserFromRequest(req: FastifyRequest): any {
   return decoded;
 }
 
+export type ChannelStatus = 'connected' | 'disconnected' | 'error';
+export type ChannelType = 'shopify' | 'siigo' | 'erp' | 'woocommerce' | 'prestashop';
+
+export interface Channel {
+  id: string;
+  name: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  account_id: string;
+  type: ChannelType;
+  external_id: string;
+  access_token: string | null;
+  refresh_token: string | null;
+  token_expires_at: string | null;
+  config: any;
+  status: ChannelStatus;
+  last_error: string | null;
+}
+
 interface ChannelInput {
-  type: 'shopify' | 'siigo' | 'erp' | 'woocommerce' | 'prestashop';
+  name?: string;
+  description?: string;
+  type: ChannelType;
   external_id: string;
   access_token?: string;
   refresh_token?: string;
@@ -55,7 +77,7 @@ export async function channelsRoutes(app: FastifyInstance) {
     try {
       getUserFromRequest(req);
 
-      const { account_id, type, external_id, access_token, refresh_token, token_expires_at, config } = req.body;
+      const { account_id, name, description, type, external_id, access_token, refresh_token, token_expires_at, config } = req.body;
 
       if (!account_id || !type || !external_id) {
         return reply.status(400).send({
@@ -64,7 +86,7 @@ export async function channelsRoutes(app: FastifyInstance) {
         });
       }
 
-      const validTypes = ['shopify', 'siigo', 'erp', 'woocommerce', 'prestashop'];
+      const validTypes: ChannelType[] = ['shopify', 'siigo', 'erp', 'woocommerce', 'prestashop'];
       if (!validTypes.includes(type)) {
         return reply.status(400).send({
           success: false,
@@ -76,6 +98,8 @@ export async function channelsRoutes(app: FastifyInstance) {
         .from("channels")
         .insert([{
           account_id,
+          name,
+          description,
           type,
           external_id,
           access_token,
@@ -104,6 +128,17 @@ export async function channelsRoutes(app: FastifyInstance) {
 
       const { id } = req.params;
       const updates = req.body;
+
+      // Validate type if provided
+      if (updates.type) {
+        const validTypes: ChannelType[] = ['shopify', 'siigo', 'erp', 'woocommerce', 'prestashop'];
+        if (!validTypes.includes(updates.type)) {
+          return reply.status(400).send({
+            success: false,
+            error: `Invalid type. Must be one of: ${validTypes.join(', ')}`
+          });
+        }
+      }
 
       const { data, error } = await supabase
         .from("channels")

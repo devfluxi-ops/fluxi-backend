@@ -42,7 +42,7 @@ async function channelsRoutes(app) {
     app.post("/channels", async (req, reply) => {
         try {
             getUserFromRequest(req);
-            const { account_id, type, external_id, access_token, refresh_token, token_expires_at, config } = req.body;
+            const { account_id, name, description, type, external_id, access_token, refresh_token, token_expires_at, config } = req.body;
             if (!account_id || !type || !external_id) {
                 return reply.status(400).send({
                     success: false,
@@ -60,6 +60,8 @@ async function channelsRoutes(app) {
                 .from("channels")
                 .insert([{
                     account_id,
+                    name,
+                    description,
                     type,
                     external_id,
                     access_token,
@@ -85,6 +87,16 @@ async function channelsRoutes(app) {
             getUserFromRequest(req);
             const { id } = req.params;
             const updates = req.body;
+            // Validate type if provided
+            if (updates.type) {
+                const validTypes = ['shopify', 'siigo', 'erp', 'woocommerce', 'prestashop'];
+                if (!validTypes.includes(updates.type)) {
+                    return reply.status(400).send({
+                        success: false,
+                        error: `Invalid type. Must be one of: ${validTypes.join(', ')}`
+                    });
+                }
+            }
             const { data, error } = await supabaseClient_1.supabase
                 .from("channels")
                 .update({

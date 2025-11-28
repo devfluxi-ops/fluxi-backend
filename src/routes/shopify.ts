@@ -108,6 +108,8 @@ export async function shopifyRoutes(app: FastifyInstance) {
         .from("channels")
         .insert([{
           account_id: accountId,
+          name: `Shopify Store - ${shop}`,
+          description: `Shopify store connected via OAuth`,
           type: 'shopify',
           external_id: shop,
           access_token: accessToken,

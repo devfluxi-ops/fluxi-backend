@@ -71,10 +71,17 @@ export async function erpRoutes(app: FastifyInstance) {
       }
 
       // Create ERP channel
+      const channelName = type === 'siigo' ? 'Siigo ERP' : 'ERP System';
+      const channelDescription = type === 'siigo'
+        ? 'Conexión a Siigo para gestión contable e inventario'
+        : 'Sistema ERP conectado';
+
       const { data: channel, error: channelError } = await supabase
         .from("channels")
         .insert([{
           account_id,
+          name: channelName,
+          description: channelDescription,
           type: type === 'siigo' ? 'siigo' : 'erp',
           external_id: type === 'siigo' ? 'siigo_api' : 'erp_system',
           access_token: accessToken,
