@@ -32,7 +32,13 @@ export async function authRoutes(app: FastifyInstance) {
       { expiresIn: "7d" }
     );
 
-    return reply.send({ user: data, token });
+    // For this demo, assume user.id is the account_id
+    // In production, you might have a separate accounts table
+    return reply.send({
+      user: data,
+      account_id: data.id,
+      token
+    });
   });
 
   // Login user
@@ -67,7 +73,13 @@ export async function authRoutes(app: FastifyInstance) {
     // do not return password hash
     const { password_hash, ...safeUser } = user;
 
-    return reply.send({ user: safeUser, token });
+    // For this demo, assume user.id is the account_id
+    // In production, you might have a separate accounts table
+    return reply.send({
+      user: safeUser,
+      account_id: user.id,
+      token
+    });
   });
 
   // Me endpoint

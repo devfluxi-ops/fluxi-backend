@@ -25,7 +25,13 @@ async function authRoutes(app) {
             return reply.status(400).send({ error: error.message });
         }
         const token = jsonwebtoken_1.default.sign({ userId: data.id, email: data.email }, JWT_SECRET, { expiresIn: "7d" });
-        return reply.send({ user: data, token });
+        // For this demo, assume user.id is the account_id
+        // In production, you might have a separate accounts table
+        return reply.send({
+            user: data,
+            account_id: data.id,
+            token
+        });
     });
     // Login user
     app.post("/auth/login", async (req, reply) => {
@@ -48,7 +54,13 @@ async function authRoutes(app) {
         const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: "7d" });
         // do not return password hash
         const { password_hash, ...safeUser } = user;
-        return reply.send({ user: safeUser, token });
+        // For this demo, assume user.id is the account_id
+        // In production, you might have a separate accounts table
+        return reply.send({
+            user: safeUser,
+            account_id: user.id,
+            token
+        });
     });
     // Me endpoint
     app.get("/auth/me", async (req, reply) => {
