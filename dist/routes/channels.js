@@ -85,6 +85,29 @@ async function channelsRoutes(app) {
                     error: `Invalid type. Must be one of: ${validTypes.join(', ')}`
                 });
             }
+            // Special handling for Siigo channels
+            let processedConfig = config || {};
+            let processedAccessToken = access_token;
+            let processedExternalId = external_id;
+            if (type === 'siigo') {
+                // For Siigo, extract username and api_key from config
+                const username = config?.username || config?.email;
+                const apiKey = config?.api_key || access_token;
+                if (!username || !apiKey) {
+                    return reply.status(400).send({
+                        success: false,
+                        error: "Siigo channels require username and api_key in config"
+                    });
+                }
+                // Store API key in access_token, username in external_id
+                processedAccessToken = apiKey;
+                processedExternalId = username;
+                processedConfig = {
+                    ...config,
+                    username: username,
+                    configured_at: new Date().toISOString()
+                };
+            }
             const { data, error } = await supabaseClient_1.supabase
                 .from("channels")
                 .insert([{
@@ -92,12 +115,12 @@ async function channelsRoutes(app) {
                     name,
                     description,
                     type,
-                    external_id,
-                    access_token,
+                    external_id: processedExternalId,
+                    access_token: processedAccessToken,
                     refresh_token,
                     token_expires_at,
-                    config: config || {},
-                    status: access_token ? 'connected' : 'disconnected'
+                    config: processedConfig,
+                    status: processedAccessToken ? 'connected' : 'disconnected'
                 }])
                 .select()
                 .single();
@@ -238,7 +261,10 @@ async function testShopifyConnection(channel) {
 }
 async function testERPConnection(channel) {
     try {
-        // Basic ERP API test (generic)
+        if (channel.type === 'siigo') {
+            return await testSiigoConnection(channel);
+        }
+        // Generic ERP test for other ERP types
         const apiUrl = process.env.ERP_API_BASE_URL;
         const clientId = process.env.ERP_CLIENT_ID;
         const clientSecret = process.env.ERP_CLIENT_SECRET;
@@ -251,5 +277,59 @@ async function testERPConnection(channel) {
     }
     catch (error) {
         return { success: false, message: `ERP connection error: ${error.message}` };
+    }
+}
+async function testSiigoConnection(channel) {
+    try {
+        // Validate Siigo credentials
+        const apiKey = channel.access_token;
+        const username = channel.external_id;
+        if (!apiKey || !username) {
+            return {
+                success: false,
+                message: 'Missing Siigo credentials (username or API key)'
+            };
+        }
+        // Test connection with Siigo API
+        const response = await fetch('https://api.siigo.com/v1/users/validate', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            // Handle specific Siigo error codes
+            if (result.errors && result.errors.length > 0) {
+                const error = result.errors[0];
+                if (error.code === 'InvalidToken') {
+                    return {
+                        success: false,
+                        message: 'Invalid Siigo API key or token expired'
+                    };
+                }
+                return {
+                    success: false,
+                    message: `Siigo API error: ${error.message}`
+                };
+            }
+            return {
+                success: false,
+                message: `Siigo API error: ${response.status} ${response.statusText}`
+            };
+        }
+        // Success - return Siigo user info
+        return {
+            success: true,
+            message: 'Siigo connection successful',
+            siigo_user: result.data || result
+        };
+    }
+    catch (error) {
+        return {
+            success: false,
+            message: `Siigo connection failed: ${error.message}`
+        };
     }
 }
