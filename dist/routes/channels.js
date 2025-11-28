@@ -290,13 +290,21 @@ async function testSiigoConnection(channel) {
                 message: 'Missing Siigo credentials (username or API key)'
             };
         }
+        // Get Siigo API configuration from environment
+        const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com/v1';
+        const partnerId = process.env.SIIGO_PARTNER_ID;
         // Test connection with Siigo API
-        const response = await fetch('https://api.siigo.com/v1/users/validate', {
+        const headers = {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        };
+        // Add Partner-Id if configured
+        if (partnerId && partnerId.trim()) {
+            headers['Partner-Id'] = partnerId;
+        }
+        const response = await fetch(`${baseUrl}/users/validate`, {
             method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
+            headers
         });
         const result = await response.json();
         if (!response.ok) {
@@ -316,7 +324,8 @@ async function testSiigoConnection(channel) {
             }
             return {
                 success: false,
-                message: `Siigo API error: ${response.status} ${response.statusText}`
+                message: `Siigo API error: ${response.status} ${response.statusText}`,
+                details: result
             };
         }
         // Success - return Siigo user info
