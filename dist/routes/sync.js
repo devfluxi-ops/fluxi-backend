@@ -27,6 +27,18 @@ async function syncRoutes(app) {
                     error: "account_id is required"
                 });
             }
+            // Validate account exists
+            const { data: accountCheck } = await supabaseClient_1.supabase
+                .from("accounts")
+                .select("id")
+                .eq("id", account_id)
+                .single();
+            if (!accountCheck) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Invalid account_id: account does not exist"
+                });
+            }
             let channelsToSync = [];
             if (channel_id) {
                 // Sync specific channel
@@ -110,6 +122,18 @@ async function syncRoutes(app) {
                     error: "account_id is required"
                 });
             }
+            // Validate account exists
+            const { data: accountCheck } = await supabaseClient_1.supabase
+                .from("accounts")
+                .select("id")
+                .eq("id", account_id)
+                .single();
+            if (!accountCheck) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Invalid account_id: account does not exist"
+                });
+            }
             let channelsToSync = [];
             if (channel_id) {
                 const { data: channel } = await supabaseClient_1.supabase
@@ -190,6 +214,18 @@ async function syncRoutes(app) {
                     error: "account_id is required"
                 });
             }
+            // Validate account exists
+            const { data: accountCheck } = await supabaseClient_1.supabase
+                .from("accounts")
+                .select("id")
+                .eq("id", account_id)
+                .single();
+            if (!accountCheck) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Invalid account_id: account does not exist"
+                });
+            }
             let channelsToSync = [];
             if (channel_id) {
                 const { data: channel } = await supabaseClient_1.supabase
@@ -268,6 +304,18 @@ async function syncRoutes(app) {
                 return reply.status(400).send({
                     success: false,
                     error: "account_id is required"
+                });
+            }
+            // Validate account exists
+            const { data: accountCheck } = await supabaseClient_1.supabase
+                .from("accounts")
+                .select("id")
+                .eq("id", account_id)
+                .single();
+            if (!accountCheck) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Invalid account_id: account does not exist"
                 });
             }
             // Get recent sync logs

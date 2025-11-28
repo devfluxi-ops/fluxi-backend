@@ -27,6 +27,20 @@ export async function erpRoutes(app: FastifyInstance) {
         });
       }
 
+      // Validate account exists
+      const { data: accountCheck } = await supabase
+        .from("accounts")
+        .select("id")
+        .eq("id", account_id)
+        .single();
+
+      if (!accountCheck) {
+        return reply.status(400).send({
+          success: false,
+          error: "Invalid account_id: account does not exist"
+        });
+      }
+
       if (type !== 'siigo' && type !== 'erp') {
         return reply.status(400).send({
           success: false,

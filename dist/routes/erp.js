@@ -27,6 +27,18 @@ async function erpRoutes(app) {
                     error: "account_id and type are required"
                 });
             }
+            // Validate account exists
+            const { data: accountCheck } = await supabaseClient_1.supabase
+                .from("accounts")
+                .select("id")
+                .eq("id", account_id)
+                .single();
+            if (!accountCheck) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "Invalid account_id: account does not exist"
+                });
+            }
             if (type !== 'siigo' && type !== 'erp') {
                 return reply.status(400).send({
                     success: false,
