@@ -293,7 +293,7 @@ async function testSiigoConnection(channel) {
         // Get Siigo API configuration from environment
         const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com/v1';
         const partnerId = process.env.SIIGO_PARTNER_ID;
-        // Test connection with Siigo API
+        // Test connection with Siigo API - try different endpoints
         const headers = {
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json'
@@ -302,10 +302,26 @@ async function testSiigoConnection(channel) {
         if (partnerId && partnerId.trim()) {
             headers['Partner-Id'] = partnerId;
         }
-        const response = await fetch(`${baseUrl}/users/validate`, {
+        // Try different Siigo endpoints to validate credentials
+        // First try: Get user information
+        let response = await fetch(`${baseUrl}/users`, {
             method: 'GET',
             headers
         });
+        // If users endpoint fails, try account endpoint
+        if (!response.ok) {
+            response = await fetch(`${baseUrl}/account`, {
+                method: 'GET',
+                headers
+            });
+        }
+        // If account endpoint fails, try companies endpoint
+        if (!response.ok) {
+            response = await fetch(`${baseUrl}/companies`, {
+                method: 'GET',
+                headers
+            });
+        }
         const result = await response.json();
         if (!response.ok) {
             // Handle specific Siigo error codes
@@ -328,11 +344,11 @@ async function testSiigoConnection(channel) {
                 details: result
             };
         }
-        // Success - return Siigo user info
+        // Success - return Siigo response
         return {
             success: true,
             message: 'Siigo connection successful',
-            siigo_user: result.data || result
+            siigo_data: result.data || result
         };
     }
     catch (error) {
