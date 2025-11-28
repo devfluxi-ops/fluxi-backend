@@ -2,8 +2,10 @@ import Fastify from "fastify";
 import dotenv from "dotenv";
 import cors from "@fastify/cors";
 import { authRoutes } from "./routes/auth";
+import { accountsRoutes } from "./routes/accounts";
 import { orderRoutes } from "./routes/orders";
 import { productRoutes } from "./routes/products";
+import { inventoriesRoutes } from "./routes/inventories";
 import { channelsRoutes } from "./routes/channels";
 import { shopifyRoutes } from "./routes/shopify";
 import { erpRoutes } from "./routes/erp";
@@ -22,8 +24,10 @@ app.get("/health", async () => {
 });
 
 authRoutes(app);
+accountsRoutes(app);
 orderRoutes(app);
 productRoutes(app);
+inventoriesRoutes(app);
 channelsRoutes(app);
 shopifyRoutes(app);
 erpRoutes(app);

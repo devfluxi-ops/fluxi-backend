@@ -12,6 +12,24 @@ function getUserFromRequest(req: FastifyRequest): any {
   return decoded;
 }
 
+// Middleware helper
+async function assertAccountBelongsToUser(
+  supabase: any,
+  userId: string,
+  accountId: string
+) {
+  const { data, error } = await supabase
+    .from('account_users')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('account_id', accountId)
+    .maybeSingle();
+
+  if (error || !data) {
+    throw new Error('Account not found for this user');
+  }
+}
+
 export type ChannelStatus = 'connected' | 'disconnected' | 'error';
 export type ChannelType = 'shopify' | 'siigo' | 'erp' | 'woocommerce' | 'prestashop';
 
@@ -45,28 +63,32 @@ interface ChannelInput {
 
 export async function channelsRoutes(app: FastifyInstance) {
   // GET /channels - List channels for account
-  app.get("/channels", async (req: FastifyRequest<{ Querystring: { account_id?: string } }>, reply: FastifyReply) => {
+  app.get("/channels", async (req: FastifyRequest<{ Querystring: { account_id: string } }>, reply: FastifyReply) => {
     try {
-      getUserFromRequest(req);
+      const user = getUserFromRequest(req);
+      const { account_id } = req.query;
 
-      const accountId = req.query.account_id;
-
-      let query = supabase
-        .from("channels")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (accountId) {
-        query = query.eq("account_id", accountId);
+      if (!account_id) {
+        return reply.status(400).send({
+          success: false,
+          error: "account_id is required"
+        });
       }
 
-      const { data, error } = await query;
+      // Validate account belongs to user
+      await assertAccountBelongsToUser(supabase, user.userId, account_id);
+
+      const { data, error } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("account_id", account_id)
+        .order("created_at", { ascending: false });
 
       if (error) {
         return reply.status(400).send({ success: false, error: error.message });
       }
 
-      return reply.send({ success: true, channels: data });
+      return reply.send({ success: true, channels: data || [] });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
     }

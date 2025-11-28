@@ -15,24 +15,41 @@ function getUserFromRequest(req) {
     const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
     return decoded;
 }
+// Middleware helper
+async function assertAccountBelongsToUser(supabase, userId, accountId) {
+    const { data, error } = await supabase
+        .from('account_users')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('account_id', accountId)
+        .maybeSingle();
+    if (error || !data) {
+        throw new Error('Account not found for this user');
+    }
+}
 async function channelsRoutes(app) {
     // GET /channels - List channels for account
     app.get("/channels", async (req, reply) => {
         try {
-            getUserFromRequest(req);
-            const accountId = req.query.account_id;
-            let query = supabaseClient_1.supabase
+            const user = getUserFromRequest(req);
+            const { account_id } = req.query;
+            if (!account_id) {
+                return reply.status(400).send({
+                    success: false,
+                    error: "account_id is required"
+                });
+            }
+            // Validate account belongs to user
+            await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, account_id);
+            const { data, error } = await supabaseClient_1.supabase
                 .from("channels")
                 .select("*")
+                .eq("account_id", account_id)
                 .order("created_at", { ascending: false });
-            if (accountId) {
-                query = query.eq("account_id", accountId);
-            }
-            const { data, error } = await query;
             if (error) {
                 return reply.status(400).send({ success: false, error: error.message });
             }
-            return reply.send({ success: true, channels: data });
+            return reply.send({ success: true, channels: data || [] });
         }
         catch (error) {
             return reply.status(401).send({ success: false, error: error.message });
