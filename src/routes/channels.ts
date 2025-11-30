@@ -68,7 +68,7 @@ export async function channelsRoutes(app: FastifyInstance) {
       }
 
       // Validate account belongs to user
-      await assertAccountBelongsToUser(supabase, user.userId, account_id);
+      await validateAccountAccess(user, account_id);
 
       const { data, error } = await supabase
         .from("channels")

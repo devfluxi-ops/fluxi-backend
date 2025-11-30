@@ -1,37 +1,30 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.channelsRoutes = channelsRoutes;
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const supabaseClient_1 = require("../supabaseClient");
-function getUserFromRequest(req) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        throw new Error("Missing Authorization header");
-    }
-    const token = authHeader.replace("Bearer ", "");
-    const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
-    return decoded;
-}
-// Middleware helper
-async function assertAccountBelongsToUser(supabase, userId, accountId) {
-    const { data, error } = await supabase
-        .from('account_users')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('account_id', accountId)
-        .maybeSingle();
-    if (error || !data) {
-        throw new Error('Account not found for this user');
-    }
-}
+const auth_1 = require("../utils/auth");
 async function channelsRoutes(app) {
+    // GET /channel-types - List available channel types
+    app.get("/channel-types", async (req, reply) => {
+        try {
+            // This endpoint doesn't require authentication as it just lists available types
+            const { data, error } = await supabaseClient_1.supabase
+                .from("channel_types")
+                .select("*")
+                .order("name");
+            if (error) {
+                return reply.status(400).send({ success: false, error: error.message });
+            }
+            return reply.send({ success: true, channel_types: data || [] });
+        }
+        catch (error) {
+            return reply.status(500).send({ success: false, error: error.message });
+        }
+    });
     // GET /channels - List channels for account
     app.get("/channels", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { account_id } = req.query;
             if (!account_id) {
                 return reply.status(400).send({
@@ -40,7 +33,7 @@ async function channelsRoutes(app) {
                 });
             }
             // Validate account belongs to user
-            await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, account_id);
+            await (0, auth_1.validateAccountAccess)(user, account_id);
             const { data, error } = await supabaseClient_1.supabase
                 .from("channels")
                 .select("*")
@@ -58,7 +51,7 @@ async function channelsRoutes(app) {
     // POST /channels - Create new channel
     app.post("/channels", async (req, reply) => {
         try {
-            getUserFromRequest(req);
+            (0, auth_1.getUserFromRequest)(req);
             const { account_id, name, description, type, external_id, access_token, refresh_token, token_expires_at, config } = req.body;
             if (!account_id || !type || !external_id) {
                 return reply.status(400).send({
@@ -136,7 +129,7 @@ async function channelsRoutes(app) {
     // PUT /channels/:id - Update channel
     app.put("/channels/:id", async (req, reply) => {
         try {
-            getUserFromRequest(req);
+            (0, auth_1.getUserFromRequest)(req);
             const { id } = req.params;
             const updates = req.body;
             // Validate type if provided
@@ -170,7 +163,7 @@ async function channelsRoutes(app) {
     // DELETE /channels/:id - Delete channel
     app.delete("/channels/:id", async (req, reply) => {
         try {
-            getUserFromRequest(req);
+            (0, auth_1.getUserFromRequest)(req);
             const { id } = req.params;
             const { error } = await supabaseClient_1.supabase
                 .from("channels")
@@ -188,7 +181,7 @@ async function channelsRoutes(app) {
     // POST /channels/:id/test - Test channel connection
     app.post("/channels/:id/test", async (req, reply) => {
         try {
-            getUserFromRequest(req);
+            (0, auth_1.getUserFromRequest)(req);
             const { id } = req.params;
             // Get channel details
             const { data: channel, error: channelError } = await supabaseClient_1.supabase

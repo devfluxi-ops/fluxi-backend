@@ -21,25 +21,36 @@ async function authRoutes(app) {
         if (userError)
             return reply.code(400).send({ error: userError.message });
         // 2. Crear account
+        const accountSlug = `${email.split('@')[0]}-account`.toLowerCase().replace(/[^a-z0-9-]/g, '');
         const { data: account, error: accountError } = await supabaseClient_1.supabase
             .from('accounts')
-            .insert({ name: `${email} Account` })
+            .insert({
+            name: `${email} Account`,
+            slug: accountSlug
+        })
             .select('*')
             .single();
         if (accountError)
             return reply.code(400).send({ error: accountError.message });
         // 3. Vincular en account_users
-        await supabaseClient_1.supabase.from('account_users').insert({
+        const { error: linkError } = await supabaseClient_1.supabase.from('account_users').insert({
             account_id: account.id,
             user_id: user.id,
-            role: 'owner',
+            role: 'owner'
         });
-        // 4. Crear token
-        const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        if (linkError)
+            return reply.code(400).send({ error: linkError.message });
+        // 4. Crear token con claims para RLS
+        const token = jsonwebtoken_1.default.sign({
+            userId: user.id,
+            email: user.email,
+            account_id: account.id,
+            role: 'owner'
+        }, process.env.JWT_SECRET, { expiresIn: '7d' });
         // 5. Respuesta
         return reply.send({
             user: { id: user.id, email: user.email, created_at: user.created_at },
-            account_id: account.id,
+            account: { id: account.id, name: account.name },
             token,
         });
     });
@@ -57,10 +68,10 @@ async function authRoutes(app) {
         const isValid = await bcryptjs_1.default.compare(password, user.password_hash);
         if (!isValid)
             return reply.code(401).send({ error: 'Invalid credentials' });
-        // 2. Obtener account_id desde account_users
+        // 2. Obtener account_id y role desde account_users
         const { data: accountUser, error: auError } = await supabaseClient_1.supabase
             .from('account_users')
-            .select('account_id')
+            .select('account_id, role')
             .eq('user_id', user.id)
             .order('created_at', { ascending: true })
             .limit(1)
@@ -70,13 +81,40 @@ async function authRoutes(app) {
                 error: 'User has no account linked in account_users',
             });
         }
-        const accountId = accountUser.account_id;
-        // 3. Crear token
-        const token = jsonwebtoken_1.default.sign({ userId: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: '7d' });
-        // 4. Respuesta
+        // 3. Obtener datos de la cuenta
+        const { data: account, error: accountError } = await supabaseClient_1.supabase
+            .from('accounts')
+            .select('id, name, slug')
+            .eq('id', accountUser.account_id)
+            .single();
+        if (accountError || !account) {
+            return reply.code(400).send({ error: 'Account not found' });
+        }
+        // 4. Crear token con claims para RLS
+        const token = jsonwebtoken_1.default.sign({
+            userId: user.id,
+            email: user.email,
+            account_id: account.id,
+            role: accountUser.role
+        }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        // 5. Actualizar last_login_at
+        await supabaseClient_1.supabase
+            .from('users')
+            .update({ last_login_at: new Date().toISOString() })
+            .eq('id', user.id);
+        // 6. Respuesta
         return reply.send({
-            user: { id: user.id, email: user.email, created_at: user.created_at },
-            account_id: accountId,
+            user: {
+                id: user.id,
+                email: user.email,
+                created_at: user.created_at,
+                last_login_at: user.last_login_at
+            },
+            account: {
+                id: account.id,
+                name: account.name,
+                slug: account.slug
+            },
             token,
         });
     });
@@ -89,7 +127,29 @@ async function authRoutes(app) {
             }
             const token = authHeader.replace("Bearer ", "");
             const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
-            return reply.send({ user: decoded });
+            // Get full user data from database
+            const { data: user, error: userError } = await supabaseClient_1.supabase
+                .from('users')
+                .select('id, email, full_name, created_at, last_login_at')
+                .eq('id', decoded.userId)
+                .single();
+            if (userError || !user) {
+                return reply.status(401).send({ error: "User not found" });
+            }
+            // Get account data
+            const { data: account, error: accountError } = await supabaseClient_1.supabase
+                .from('accounts')
+                .select('id, name, slug, default_currency, timezone')
+                .eq('id', decoded.account_id)
+                .single();
+            return reply.send({
+                user,
+                account,
+                token_info: {
+                    role: decoded.role,
+                    expires_at: decoded.exp
+                }
+            });
         }
         catch (err) {
             return reply.status(401).send({ error: "Invalid or expired token" });

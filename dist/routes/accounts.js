@@ -1,37 +1,13 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.accountsRoutes = accountsRoutes;
-const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const supabaseClient_1 = require("../supabaseClient");
-function getUserFromRequest(req) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-        throw new Error("Missing Authorization header");
-    }
-    const token = authHeader.replace("Bearer ", "");
-    const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET);
-    return decoded;
-}
-// Middleware helper
-async function assertAccountBelongsToUser(supabase, userId, accountId) {
-    const { data, error } = await supabase
-        .from('account_users')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('account_id', accountId)
-        .maybeSingle();
-    if (error || !data) {
-        throw new Error('Account not found for this user');
-    }
-}
+const auth_1 = require("../utils/auth");
 async function accountsRoutes(app) {
     // GET /accounts - List user's accounts
     app.get("/accounts", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { data, error } = await supabaseClient_1.supabase
                 .from("accounts")
                 .select(`
@@ -65,7 +41,7 @@ async function accountsRoutes(app) {
     // POST /accounts - Create new account
     app.post("/accounts", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { name, slug } = req.body;
             if (!name) {
                 return reply.status(400).send({
@@ -112,10 +88,10 @@ async function accountsRoutes(app) {
     // GET /accounts/:accountId/members - List account members
     app.get("/accounts/:accountId/members", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { accountId } = req.params;
             // Validate user has access to account
-            await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, accountId);
+            await (0, auth_1.validateAccountAccess)(user, accountId);
             const { data, error } = await supabaseClient_1.supabase
                 .from("account_users")
                 .select(`
@@ -151,14 +127,55 @@ async function accountsRoutes(app) {
             return reply.status(401).send({ success: false, error: error.message });
         }
     });
+    // GET /accounts/:accountId/users - Alias for members (for compatibility)
+    app.get("/accounts/:accountId/users", async (req, reply) => {
+        try {
+            const user = (0, auth_1.getUserFromRequest)(req);
+            const { accountId } = req.params;
+            // Validate user has access to account
+            await (0, auth_1.validateAccountAccess)(user, accountId);
+            const { data, error } = await supabaseClient_1.supabase
+                .from("account_users")
+                .select(`
+          id,
+          account_id,
+          user_id,
+          role,
+          created_at,
+          users (
+            id,
+            email,
+            created_at
+          )
+        `)
+                .eq("account_id", accountId);
+            if (error) {
+                return reply.status(400).send({ success: false, error: error.message });
+            }
+            return reply.send({
+                success: true,
+                data: data.map((member) => ({
+                    id: member.id,
+                    account_id: member.account_id,
+                    user_id: member.user_id,
+                    role: member.role,
+                    joined_at: member.created_at,
+                    user: member.users
+                }))
+            });
+        }
+        catch (error) {
+            return reply.status(401).send({ success: false, error: error.message });
+        }
+    });
     // POST /accounts/:accountId/members/invite - Invite member
     app.post("/accounts/:accountId/members/invite", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { accountId } = req.params;
             const { email, role } = req.body;
             // Validate user has access to account
-            await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, accountId);
+            await (0, auth_1.validateAccountAccess)(user, accountId);
             if (!email || !role) {
                 return reply.status(400).send({
                     success: false,
@@ -222,11 +239,11 @@ async function accountsRoutes(app) {
     // PATCH /accounts/:accountId/members/:memberId - Update member role
     app.patch("/accounts/:accountId/members/:memberId", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { accountId, memberId } = req.params;
             const { role } = req.body;
             // Validate user has access to account
-            await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, accountId);
+            await (0, auth_1.validateAccountAccess)(user, accountId);
             if (!role) {
                 return reply.status(400).send({
                     success: false,
@@ -262,10 +279,10 @@ async function accountsRoutes(app) {
     // DELETE /accounts/:accountId/members/:memberId - Remove member
     app.delete("/accounts/:accountId/members/:memberId", async (req, reply) => {
         try {
-            const user = getUserFromRequest(req);
+            const user = (0, auth_1.getUserFromRequest)(req);
             const { accountId, memberId } = req.params;
             // Validate user has access to account
-            await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, accountId);
+            await (0, auth_1.validateAccountAccess)(user, accountId);
             const { error } = await supabaseClient_1.supabase
                 .from("account_users")
                 .delete()

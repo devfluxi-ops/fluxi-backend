@@ -196,8 +196,15 @@ async function orderRoutes(app) {
             // Validate account belongs to user
             await assertAccountBelongsToUser(supabaseClient_1.supabase, user.userId, account_id);
             let query = supabaseClient_1.supabase
-                .from("order_summary")
-                .select("*")
+                .from("orders")
+                .select(`
+          id, account_id, type, status, customer_name, customer_email,
+          customer_phone, notes, total_amount, created_at, updated_at,
+          order_items!inner(
+            id, quantity, unit_price, total_price,
+            products(id, name, sku)
+          )
+        `)
                 .eq("account_id", account_id);
             if (status) {
                 query = query.eq("status", status);
@@ -223,8 +230,15 @@ async function orderRoutes(app) {
             const user = getUserFromRequest(req);
             const { orderId } = req.params;
             const { data, error } = await supabaseClient_1.supabase
-                .from("order_summary")
-                .select("*")
+                .from("orders")
+                .select(`
+          id, account_id, type, status, customer_name, customer_email,
+          customer_phone, notes, total_amount, created_at, updated_at,
+          order_items(
+            id, quantity, unit_price, total_price,
+            products(id, name, sku)
+          )
+        `)
                 .eq("id", orderId)
                 .single();
             if (error || !data) {
