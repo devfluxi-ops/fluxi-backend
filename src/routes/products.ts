@@ -54,8 +54,7 @@ export async function productRoutes(app: FastifyInstance) {
         let query = supabase
           .from("products")
           .select(`
-            id, account_id, name, sku, price, status, created_at, updated_at,
-            inventories!inner(quantity, warehouse)
+            id, account_id, name, status, created_at, updated_at
           `)
           .eq("account_id", account_id);
 
