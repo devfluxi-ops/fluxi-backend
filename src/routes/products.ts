@@ -1,37 +1,10 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import jwt from "jsonwebtoken";
 import { supabase } from "../supabaseClient";
-
-function getUserFromRequest(req: FastifyRequest): any {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    throw new Error("Missing Authorization header");
-  }
-  const token = authHeader.replace("Bearer ", "");
-  const decoded = jwt.verify(token, process.env.JWT_SECRET as string);
-  return decoded;
-}
-
-// Middleware helper - updated for RLS
-async function assertAccountBelongsToUser(
-  user: any,
-  accountId: string
-) {
-  // Since JWT now includes account_id and we have RLS policies,
-  // we can rely on the database policies for security
-  // But we still validate the account_id matches the JWT claim
-  if (user.account_id !== accountId) {
-    throw new Error('Account access denied');
-  }
-}
-
-interface ProductsQuery {
-  account_id?: string;
-  search?: string;
-  limit?: number;
-}
+import { getUserFromRequest, validateAccountAccess } from "../utils/auth";
+import { sendSuccess, sendError, sendNotFound } from "../utils/responses";
 
 export async function productRoutes(app: FastifyInstance) {
+  // GET /products - List products with variants and stock
   app.get(
     "/products",
     async (
@@ -43,23 +16,20 @@ export async function productRoutes(app: FastifyInstance) {
         const { account_id, search, status, limit = 50 } = req.query;
 
         if (!account_id) {
-          return reply
-            .status(400)
-            .send({ success: false, error: "account_id is required" });
+          return sendError(reply, "account_id is required", 400);
         }
 
-        // Validate account belongs to user (RLS handles this now)
-        await assertAccountBelongsToUser(user, account_id);
+        // Validate account access
+        await validateAccountAccess(user, account_id);
 
+        // Use the product_catalog view for comprehensive data
         let query = supabase
-          .from("products")
-          .select(`
-            id, account_id, name, status, created_at, updated_at
-          `)
+          .from("product_catalog")
+          .select("*")
           .eq("account_id", account_id);
 
         if (search && search.trim() !== "") {
-          query = query.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
+          query = query.or(`name.ilike.%${search}%,internal_sku.ilike.%${search}%`);
         }
 
         if (status) {
@@ -71,97 +41,75 @@ export async function productRoutes(app: FastifyInstance) {
           .limit(limit);
 
         if (error) {
-          return reply
-            .status(400)
-            .send({ success: false, error: error.message });
+          return sendError(reply, error.message, 400);
         }
 
-        return reply.send({ success: true, products: data || [] });
+        return sendSuccess(reply, { products: data || [] });
       } catch (err: any) {
-        return reply.status(401).send({ success: false, error: err.message });
+        return sendError(reply, err.message, 401);
       }
     },
   );
 
-  // GET /products/:productId - Get single product
+  // GET /products/:productId - Get single product with variants and stock
   app.get("/products/:productId", async (req: FastifyRequest<{ Params: { productId: string } }>, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
       const { productId } = req.params;
 
+      // Get product with variants and stock info
       const { data, error } = await supabase
-        .from("products")
-        .select(`
-          id,
-          account_id,
-          name,
-          sku,
-          price,
-          status,
-          external_id,
-          created_at,
-          updated_at,
-          inventories (
-            warehouse,
-            quantity
-          )
-        `)
+        .from("product_catalog")
+        .select("*")
         .eq("id", productId)
         .single();
 
       if (error || !data) {
-        return reply.status(404).send({ success: false, error: "Product not found" });
+        return sendNotFound(reply, "Product");
       }
 
-      // Validate account access (RLS handles this now)
-      await assertAccountBelongsToUser(user, data.account_id);
+      // Validate account access
+      await validateAccountAccess(user, data.account_id);
 
-      // Calculate stock
-      const stock = data.inventories?.reduce((sum: number, inv: any) => sum + inv.quantity, 0) || 0;
-
-      return reply.send({
-        success: true,
-        data: {
-          id: data.id,
-          account_id: data.account_id,
-          name: data.name,
-          sku: data.sku,
-          price: data.price,
-          stock: stock,
-          status: data.status,
-          external_id: data.external_id,
-          created_at: data.created_at,
-          updated_at: data.updated_at
-        }
-      });
+      return sendSuccess(reply, { product: data });
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      return sendError(reply, error.message, 401);
     }
   });
 
-  // POST /products - Create new product
+  // POST /products - Create new product with variant
   app.post("/products", async (req: FastifyRequest<{ Body: {
     account_id: string;
     name: string;
-    sku: string;
-    price: number;
+    description?: string;
+    internal_sku: string;
+    attributes?: Record<string, any>;
+    barcode?: string;
+    weight?: number;
+    dimensions?: Record<string, any>;
     stock?: number;
     status?: string;
-    channel_id?: string;
-    external_id?: string;
   } }>, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
-      const { account_id, name, sku, price, stock = 0, status = 'active', channel_id, external_id } = req.body;
+      const {
+        account_id,
+        name,
+        description,
+        internal_sku,
+        attributes = {},
+        barcode,
+        weight,
+        dimensions,
+        stock = 0,
+        status = 'active'
+      } = req.body;
 
-      // Validate account access (RLS handles this now)
-      await assertAccountBelongsToUser(user, account_id);
+      // Validate account access
+      await validateAccountAccess(user, account_id);
 
-      if (!name || !sku || price === undefined) {
-        return reply.status(400).send({
-          success: false,
-          error: "name, sku, and price are required"
-        });
+      if (!name || !internal_sku) {
+        return sendError(reply, "name and internal_sku are required", 400);
       }
 
       // Create product
@@ -170,50 +118,68 @@ export async function productRoutes(app: FastifyInstance) {
         .insert({
           account_id,
           name,
-          sku,
-          price,
-          status,
-          external_id
+          description,
+          status
         })
         .select()
         .single();
 
       if (productError) {
-        return reply.status(400).send({ success: false, error: productError.message });
+        return sendError(reply, productError.message, 400);
       }
 
-      // Create inventory if stock > 0
+      // Create product variant
+      const { data: variant, error: variantError } = await supabase
+        .from("product_variants")
+        .insert({
+          product_id: product.id,
+          internal_sku,
+          attributes,
+          barcode,
+          weight,
+          dimensions
+        })
+        .select()
+        .single();
+
+      if (variantError) {
+        return sendError(reply, variantError.message, 400);
+      }
+
+      // Create inventory stock if stock > 0
       if (stock > 0) {
-        const { error: inventoryError } = await supabase
-          .from("inventories")
+        const { error: stockError } = await supabase
+          .from("inventory_stock_items")
           .insert({
-            product_id: product.id,
-            warehouse: 'default',
+            inventory_id: 1, // Default inventory - this should be configurable
+            product_variant_id: variant.id,
             quantity: stock
           });
 
-        if (inventoryError) {
-          return reply.status(400).send({ success: false, error: inventoryError.message });
+        if (stockError) {
+          return sendError(reply, stockError.message, 400);
         }
       }
 
-      return reply.send({
-        success: true,
-        data: {
+      return sendSuccess(reply, {
+        product: {
           id: product.id,
           account_id: product.account_id,
           name: product.name,
-          sku: product.sku,
-          price: product.price,
-          stock: stock,
+          description: product.description,
           status: product.status,
-          external_id: product.external_id,
-          created_at: product.created_at,
-          updated_at: product.updated_at
+          variant: {
+            id: variant.id,
+            internal_sku: variant.internal_sku,
+            attributes: variant.attributes,
+            barcode: variant.barcode,
+            stock: stock
+          },
+          created_at: product.created_at
         }
       });
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      return sendError(reply, error.message, 401);
     }
   });
 
@@ -222,11 +188,14 @@ export async function productRoutes(app: FastifyInstance) {
     Params: { productId: string },
     Body: Partial<{
       name: string;
-      sku: string;
-      price: number;
-      stock: number;
+      description: string;
       status: string;
-      external_id: string;
+      internal_sku: string;
+      attributes: Record<string, any>;
+      barcode: string;
+      weight: number;
+      dimensions: Record<string, any>;
+      stock: number;
     }>
   }>, reply: FastifyReply) => {
     try {
@@ -242,74 +211,88 @@ export async function productRoutes(app: FastifyInstance) {
         .single();
 
       if (getError || !currentProduct) {
-        return reply.status(404).send({ success: false, error: "Product not found" });
+        return sendNotFound(reply, "Product");
       }
 
-      // Validate account access (RLS handles this now)
-      await assertAccountBelongsToUser(user, currentProduct.account_id);
+      // Validate account access
+      await validateAccountAccess(user, currentProduct.account_id);
+
+      // Separate product updates from variant updates
+      const { internal_sku, attributes, barcode, weight, dimensions, stock, ...productUpdates } = updates;
 
       // Update product
-      const { data: product, error: productError } = await supabase
-        .from("products")
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", productId)
-        .select()
-        .single();
-
-      if (productError) {
-        return reply.status(400).send({ success: false, error: productError.message });
-      }
-
-      // Update inventory if stock provided
-      if (updates.stock !== undefined) {
-        const { error: inventoryError } = await supabase
-          .from("inventories")
-          .upsert({
-            product_id: productId,
-            warehouse: 'default',
-            quantity: updates.stock,
+      if (Object.keys(productUpdates).length > 0) {
+        const { error: productError } = await supabase
+          .from("products")
+          .update({
+            ...productUpdates,
             updated_at: new Date().toISOString()
-          });
+          })
+          .eq("id", productId);
 
-        if (inventoryError) {
-          return reply.status(400).send({ success: false, error: inventoryError.message });
+        if (productError) {
+          return sendError(reply, productError.message, 400);
         }
       }
 
-      // Get updated stock
-      const { data: inventory } = await supabase
-        .from("inventories")
-        .select("quantity")
-        .eq("product_id", productId)
-        .eq("warehouse", 'default')
+      // Update variant if variant fields provided
+      if (internal_sku || attributes || barcode || weight || dimensions !== undefined) {
+        const variantUpdates: any = {};
+        if (internal_sku) variantUpdates.internal_sku = internal_sku;
+        if (attributes) variantUpdates.attributes = attributes;
+        if (barcode !== undefined) variantUpdates.barcode = barcode;
+        if (weight !== undefined) variantUpdates.weight = weight;
+        if (dimensions) variantUpdates.dimensions = dimensions;
+
+        const { error: variantError } = await supabase
+          .from("product_variants")
+          .update(variantUpdates)
+          .eq("product_id", productId);
+
+        if (variantError) {
+          return sendError(reply, variantError.message, 400);
+        }
+      }
+
+      // Update stock if provided
+      if (stock !== undefined) {
+        // Get the variant ID first
+        const { data: variant } = await supabase
+          .from("product_variants")
+          .select("id")
+          .eq("product_id", productId)
+          .single();
+
+        if (variant) {
+          const { error: stockError } = await supabase
+            .from("inventory_stock_items")
+            .upsert({
+              inventory_id: 1, // Default inventory
+              product_variant_id: variant.id,
+              quantity: stock,
+              updated_at: new Date().toISOString()
+            });
+
+          if (stockError) {
+            return sendError(reply, stockError.message, 400);
+          }
+        }
+      }
+
+      // Return updated product data
+      const { data: updatedProduct } = await supabase
+        .from("product_catalog")
+        .select("*")
+        .eq("id", productId)
         .single();
 
-      const stock = inventory?.quantity || 0;
-
-      return reply.send({
-        success: true,
-        data: {
-          id: product.id,
-          account_id: product.account_id,
-          name: product.name,
-          sku: product.sku,
-          price: product.price,
-          stock: stock,
-          status: product.status,
-          external_id: product.external_id,
-          created_at: product.created_at,
-          updated_at: product.updated_at
-        }
-      });
+      return sendSuccess(reply, { product: updatedProduct });
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      return sendError(reply, error.message, 401);
     }
   });
 
-  // DELETE /products/:productId - Delete product
+  // DELETE /products/:productId - Delete product and all related data
   app.delete("/products/:productId", async (req: FastifyRequest<{ Params: { productId: string } }>, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
@@ -323,31 +306,42 @@ export async function productRoutes(app: FastifyInstance) {
         .single();
 
       if (getError || !currentProduct) {
-        return reply.status(404).send({ success: false, error: "Product not found" });
+        return sendNotFound(reply, "Product");
       }
 
-      // Validate account access (RLS handles this now)
-      await assertAccountBelongsToUser(user, currentProduct.account_id);
+      // Validate account access
+      await validateAccountAccess(user, currentProduct.account_id);
 
-      // Delete inventory first
+      // Delete in correct order (respecting foreign keys)
+      // 1. Delete inventory stock items
       await supabase
-        .from("inventories")
+        .from("inventory_stock_items")
+        .delete()
+        .eq("product_variant_id", await supabase
+          .from("product_variants")
+          .select("id")
+          .eq("product_id", productId)
+        );
+
+      // 2. Delete product variants
+      await supabase
+        .from("product_variants")
         .delete()
         .eq("product_id", productId);
 
-      // Delete product
+      // 3. Delete product
       const { error: productError } = await supabase
         .from("products")
         .delete()
         .eq("id", productId);
 
       if (productError) {
-        return reply.status(400).send({ success: false, error: productError.message });
+        return sendError(reply, productError.message, 400);
       }
 
-      return reply.send({ success: true });
+      return sendSuccess(reply, { message: "Product deleted successfully" });
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      return sendError(reply, error.message, 401);
     }
   });
 }
