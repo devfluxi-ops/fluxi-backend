@@ -1,0 +1,1760 @@
+openapi: "3.0.3"
+info:
+  title: "Fluxi API - Multichannel Inventory Management"
+  version: "1.0.0"
+  description: |
+    Complete API for Fluxi - a multichannel inventory management system with ERP integrations,
+    e-commerce platforms, and centralized stock control. Supports multi-tenancy, real-time sync,
+    and automated order fulfillment.
+
+    ## Key Features:
+    - **Multi-tenant architecture** with account isolation
+    - **Plugin-based channel integrations** (Siigo, Shopify, WooCommerce, etc.)
+    - **Centralized inventory management** with multiple warehouses
+    - **Product catalog (PIM)** with variants and mappings
+    - **Automated order processing** and fulfillment
+    - **Real-time synchronization** with external platforms
+    - **Comprehensive audit logging** and reporting
+
+servers:
+  - url: https://api.fluxi.com/v1
+    description: Production API
+  - url: https://staging.api.fluxi.com/v1
+    description: Staging API
+  - url: http://localhost:4000
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login
+
+  schemas:
+
+    # Common schemas
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+      required:
+        - success
+        - error
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+      required:
+        - success
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+        totalPages:
+          type: integer
+
+    # Auth schemas
+    UserCredentials:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@company.com"
+        password:
+          type: string
+          minLength: 8
+          example: "securePassword123"
+      required:
+        - email
+        - password
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        user:
+          $ref: '#/components/schemas/User'
+        token:
+          type: string
+          description: JWT token for authentication
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      required:
+        - success
+        - user
+        - token
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
+
+    # Account schemas
+    Account:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Mi Empresa S.A.S."
+        slug:
+          type: string
+          example: "mi-empresa"
+        default_currency:
+          type: string
+          example: "COP"
+        timezone:
+          type: string
+          example: "America/Bogota"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - slug
+
+    AccountUser:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [owner, admin, manager, member]
+        is_owner:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    # Channel schemas
+    ChannelType:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          example: "siigo"
+        name:
+          type: string
+          example: "Siigo ERP"
+        category:
+          type: string
+          enum: [erp, ecommerce, marketplace, pos]
+        base_api_url:
+          type: string
+        auth_type:
+          type: string
+          enum: [api_key, oauth2, basic, none]
+
+    ChannelTypeField:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_type_id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          example: "api_key"
+        label:
+          type: string
+          example: "API Key"
+        field_type:
+          type: string
+          enum: [string, password, number, boolean, select]
+        required:
+          type: boolean
+        options:
+          type: object
+        description:
+          type: string
+
+    Channel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        channel_type_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Siigo Producción"
+        status:
+          type: string
+          enum: [connected, disconnected, error, syncing]
+        is_primary:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - account_id
+        - channel_type_id
+        - name
+        - status
+
+    ChannelConfig:
+      type: object
+      properties:
+        field_key:
+          type: string
+        value:
+          type: string
+        required:
+          type: boolean
+      example:
+        api_key: "your_api_key_here"
+        username: "user@company.com"
+
+    # Inventory schemas
+    Inventory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Bodega Principal"
+        type:
+          type: string
+          enum: [physical, virtual, consignment, dropship]
+        external_id:
+          type: string
+        is_default:
+          type: boolean
+        address:
+          type: object
+          properties:
+            street:
+              type: string
+            city:
+              type: string
+            country:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - account_id
+        - name
+
+    StockItem:
+      type: object
+      properties:
+        inventory_id:
+          type: string
+          format: uuid
+        product_variant_id:
+          type: string
+          format: uuid
+        quantity:
+          type: number
+          minimum: 0
+        reserved_quantity:
+          type: number
+          minimum: 0
+          default: 0
+        available_quantity:
+          type: number
+          description: "Calculated: quantity - reserved_quantity"
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - inventory_id
+        - product_variant_id
+        - quantity
+
+    # Product schemas
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "Camiseta Básica"
+        description:
+          type: string
+        slug:
+          type: string
+          example: "camiseta-basica"
+        status:
+          type: string
+          enum: [active, inactive, archived]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - account_id
+        - name
+
+    ProductVariant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        internal_sku:
+          type: string
+          example: "CAM-BAS-BLA-M"
+        attributes:
+          type: object
+          example: {"color": "black", "size": "M"}
+        barcode:
+          type: string
+        weight:
+          type: number
+        dimensions:
+          type: object
+          properties:
+            length:
+              type: number
+            width:
+              type: number
+            height:
+              type: number
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - product_id
+        - internal_sku
+
+    ChannelProduct:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        product_variant_id:
+          type: string
+          format: uuid
+        external_id:
+          type: string
+          example: "shopify_prod_12345"
+        external_sku:
+          type: string
+          example: "CAMBAS-BLA-M"
+        price:
+          type: number
+          example: 45000.00
+        currency:
+          type: string
+          example: "COP"
+        status:
+          type: string
+          enum: [imported, published, unpublished, archived]
+        last_sync_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - channel_id
+        - product_variant_id
+        - external_id
+
+    # Order schemas
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        external_order_id:
+          type: string
+        origin:
+          type: string
+          enum: [manual, external, api]
+        status:
+          type: string
+          enum: [pending, confirmed, paid, fulfilled, shipped, delivered, cancelled, refunded]
+        total_amount:
+          type: number
+          example: 150000.00
+        currency:
+          type: string
+          example: "COP"
+        customer_name:
+          type: string
+          example: "Juan Pérez"
+        customer_email:
+          type: string
+          format: email
+        customer_phone:
+          type: string
+        customer_address:
+          type: object
+          properties:
+            street:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            country:
+              type: string
+            postal_code:
+              type: string
+        notes:
+          type: string
+        order_date:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - account_id
+        - status
+        - total_amount
+        - currency
+
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        product_variant_id:
+          type: string
+          format: uuid
+        quantity:
+          type: number
+          minimum: 0.001
+        unit_price:
+          type: number
+          minimum: 0
+        total_price:
+          type: number
+          minimum: 0
+        external_product_id:
+          type: string
+        external_variant_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - order_id
+        - product_variant_id
+        - quantity
+        - unit_price
+        - total_price
+
+    # Sync schemas
+    SyncLog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        account_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        entity_type:
+          type: string
+          enum: [product, order, inventory, stock]
+        entity_id:
+          type: string
+          format: uuid
+        action:
+          type: string
+          enum: [import, export, update, delete, sync]
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        status:
+          type: string
+          enum: [success, error, warning]
+        message:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - account_id
+        - entity_type
+        - action
+        - direction
+        - status
+
+paths:
+
+  # =========================================
+  # AUTHENTICATION
+  # =========================================
+
+  /auth/signup:
+    post:
+      summary: Register new account and user
+      description: Creates a new account, user, and establishes owner relationship
+      operationId: signup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                account_name:
+                  type: string
+                  example: "Mi Empresa S.A.S."
+                user_email:
+                  type: string
+                  format: email
+                user_password:
+                  type: string
+                  minLength: 8
+                user_full_name:
+                  type: string
+              required:
+                - account_name
+                - user_email
+                - user_password
+      responses:
+        '201':
+          description: Account and user created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/AuthResponse'
+                  - type: object
+                    properties:
+                      account:
+                        $ref: '#/components/schemas/Account'
+        '400':
+          description: Invalid input data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /auth/login:
+    post:
+      summary: User login
+      description: Authenticate user and return JWT token
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserCredentials' }
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # =========================================
+  # ACCOUNTS MANAGEMENT
+  # =========================================
+
+  /accounts:
+    get:
+      summary: List user accounts
+      description: Get all accounts where the authenticated user has access
+      operationId: listAccounts
+      security: [ BearerAuth: [] ]
+      responses:
+        '200':
+          description: Accounts retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  accounts:
+                    type: array
+                    items: { $ref: '#/components/schemas/Account' }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    post:
+      summary: Create new account
+      description: Create a new account for the authenticated user (as owner)
+      operationId: createAccount
+      security: [ BearerAuth: [] ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: "Nueva Empresa S.A.S."
+                default_currency:
+                  type: string
+                  example: "COP"
+                timezone:
+                  type: string
+                  example: "America/Bogota"
+              required:
+                - name
+      responses:
+        '201':
+          description: Account created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  account:
+                    $ref: '#/components/schemas/Account'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /accounts/{accountId}/users:
+    get:
+      summary: List account users
+      description: Get all users with access to the account
+      operationId: listAccountUsers
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  users:
+                    type: array
+                    items: { $ref: '#/components/schemas/AccountUser' }
+        '403':
+          description: No access to account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    post:
+      summary: Invite user to account
+      description: Invite a new user to join the account with specified role
+      operationId: inviteAccountUser
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [admin, manager, member]
+                  default: member
+              required:
+                - email
+      responses:
+        '201':
+          description: User invited successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Invitation sent to user@email.com"
+        '400':
+          description: Invalid input or user already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # =========================================
+  # CHANNEL MANAGEMENT
+  # =========================================
+
+  /channel-types:
+    get:
+      summary: List available channel types
+      description: Get all supported integration types (Siigo, Shopify, etc.)
+      operationId: listChannelTypes
+      security: [ BearerAuth: [] ]
+      responses:
+        '200':
+          description: Channel types retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  channel_types:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChannelType' }
+
+  /accounts/{accountId}/channels:
+    get:
+      summary: List account channels
+      description: Get all channels configured for the account
+      operationId: listChannels
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Channels retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  channels:
+                    type: array
+                    items: { $ref: '#/components/schemas/Channel' }
+        '403':
+          description: No access to account
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    post:
+      summary: Create new channel
+      description: Create a new channel integration for the account
+      operationId: createChannel
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel_type_id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+                  example: "Siigo Producción"
+                is_primary:
+                  type: boolean
+                  default: false
+              required:
+                - channel_type_id
+                - name
+      responses:
+        '201':
+          description: Channel created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  channel:
+                    $ref: '#/components/schemas/Channel'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /channels/{channelId}/config-fields:
+    get:
+      summary: Get channel configuration fields
+      description: Get the required configuration fields for a channel type
+      operationId: getChannelConfigFields
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Configuration fields retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  fields:
+                    type: array
+                    items: { $ref: '#/components/schemas/ChannelTypeField' }
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /channels/{channelId}/config:
+    post:
+      summary: Save channel configuration
+      description: Save credentials and configuration for a channel
+      operationId: saveChannelConfig
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                config:
+                  $ref: '#/components/schemas/ChannelConfig'
+              required:
+                - config
+      responses:
+        '200':
+          description: Configuration saved successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '400':
+          description: Invalid configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /channels/{channelId}/test-connection:
+    post:
+      summary: Test channel connection
+      description: Test the connection to the external platform
+      operationId: testChannelConnection
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Connection test completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  channel_id:
+                    type: string
+                    format: uuid
+                  test_result:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+                      message:
+                        type: string
+                      details:
+                        type: object
+        '404':
+          description: Channel not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # =========================================
+  # INVENTORY MANAGEMENT
+  # =========================================
+
+  /accounts/{accountId}/inventories:
+    get:
+      summary: List account inventories
+      description: Get all warehouses/inventories for the account
+      operationId: listInventories
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Inventories retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  inventories:
+                    type: array
+                    items: { $ref: '#/components/schemas/Inventory' }
+
+    post:
+      summary: Create new inventory
+      description: Create a new warehouse or inventory location
+      operationId: createInventory
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: "Bodega Norte"
+                type:
+                  type: string
+                  enum: [physical, virtual, consignment, dropship]
+                  default: physical
+                is_default:
+                  type: boolean
+                  default: false
+                address:
+                  $ref: '#/components/schemas/Inventory'
+              required:
+                - name
+      responses:
+        '201':
+          description: Inventory created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  inventory:
+                    $ref: '#/components/schemas/Inventory'
+
+  /inventories/{inventoryId}/stock:
+    get:
+      summary: Get inventory stock levels
+      description: Get stock levels for all variants in the inventory
+      operationId: getInventoryStock
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: inventoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Stock levels retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  stock:
+                    type: array
+                    items: { $ref: '#/components/schemas/StockItem' }
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+    put:
+      summary: Update stock levels
+      description: Update stock quantities for multiple variants
+      operationId: updateStockLevels
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: inventoryId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                updates:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      product_variant_id:
+                        type: string
+                        format: uuid
+                      quantity:
+                        type: number
+                        minimum: 0
+                      reserved_quantity:
+                        type: number
+                        minimum: 0
+                        default: 0
+                    required:
+                      - product_variant_id
+                      - quantity
+              required:
+                - updates
+      responses:
+        '200':
+          description: Stock updated successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+
+  # =========================================
+  # PRODUCT CATALOG (PIM)
+  # =========================================
+
+  /accounts/{accountId}/products:
+    get:
+      summary: List products with variants
+      description: Get all products and their variants for the account
+      operationId: listProducts
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, inactive, archived] }
+      responses:
+        '200':
+          description: Products retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  products:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: '#/components/schemas/Product'
+                        - type: object
+                          properties:
+                            variants:
+                              type: array
+                              items: { $ref: '#/components/schemas/ProductVariant' }
+                            total_stock:
+                              type: number
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+    post:
+      summary: Create new product
+      description: Create a new product with optional initial variants
+      operationId: createProduct
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: "Camiseta Premium"
+                description:
+                  type: string
+                variants:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      internal_sku:
+                        type: string
+                        example: "CAMPRE-BLA-M"
+                      attributes:
+                        type: object
+                        example: {"color": "black", "size": "M"}
+                      barcode:
+                        type: string
+                      price:
+                        type: number
+              required:
+                - name
+      responses:
+        '201':
+          description: Product created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  product:
+                    allOf:
+                      - $ref: '#/components/schemas/Product'
+                      - type: object
+                        properties:
+                          variants:
+                            type: array
+                            items: { $ref: '#/components/schemas/ProductVariant' }
+
+  /accounts/{accountId}/product-variants:
+    post:
+      summary: Create product variant
+      description: Add a new variant to an existing product
+      operationId: createProductVariant
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product_id:
+                  type: string
+                  format: uuid
+                internal_sku:
+                  type: string
+                  example: "CAMPRE-RED-L"
+                attributes:
+                  type: object
+                  example: {"color": "red", "size": "L"}
+                barcode:
+                  type: string
+                weight:
+                  type: number
+                dimensions:
+                  type: object
+                  properties:
+                    length:
+                      type: number
+                    width:
+                      type: number
+                    height:
+                      type: number
+              required:
+                - product_id
+                - internal_sku
+      responses:
+        '201':
+          description: Variant created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  variant:
+                    $ref: '#/components/schemas/ProductVariant'
+
+  /accounts/{accountId}/import-csv:
+    post:
+      summary: Import products from CSV
+      description: Bulk import products and variants from CSV file
+      operationId: importProductsFromCSV
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: CSV file with product data
+                options:
+                  type: object
+                  properties:
+                    update_existing:
+                      type: boolean
+                      default: false
+                    skip_errors:
+                      type: boolean
+                      default: true
+      responses:
+        '202':
+          description: Import started (async operation)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  job_id:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
+                    example: "Import job started. Check sync logs for progress."
+
+  # =========================================
+  # CHANNEL PRODUCT MANAGEMENT
+  # =========================================
+
+  /channels/{channelId}/publish-variant:
+    post:
+      summary: Publish variant to channel
+      description: Create or update product listing in external channel
+      operationId: publishVariantToChannel
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                product_variant_id:
+                  type: string
+                  format: uuid
+                price:
+                  type: number
+                  example: 45000.00
+                external_sku:
+                  type: string
+                  example: "CAMPRE-BLA-M"
+                extra_fields:
+                  type: object
+                  description: Channel-specific additional fields
+              required:
+                - product_variant_id
+                - price
+      responses:
+        '201':
+          description: Variant published successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  channel_product:
+                    $ref: '#/components/schemas/ChannelProduct'
+
+  /channels/{channelId}/import-products:
+    post:
+      summary: Import products from channel
+      description: Sync products from external channel to Fluxi catalog
+      operationId: importProductsFromChannel
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: options
+          in: query
+          schema:
+            type: object
+            properties:
+              update_existing:
+                type: boolean
+                default: true
+              create_variants:
+                type: boolean
+                default: true
+              limit:
+                type: integer
+                minimum: 1
+                maximum: 1000
+                default: 100
+      responses:
+        '202':
+          description: Import job started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  job_id:
+                    type: string
+                    format: uuid
+                  message:
+                    type: string
+                    example: "Import job started. Check sync logs for progress."
+
+  # =========================================
+  # ORDER MANAGEMENT
+  # =========================================
+
+  /accounts/{accountId}/orders:
+    get:
+      summary: List orders
+      description: Get orders for the account with filtering and pagination
+      operationId: listOrders
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, confirmed, paid, fulfilled, shipped, delivered, cancelled, refunded] }
+        - name: channel_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: origin
+          in: query
+          schema: { type: string, enum: [manual, external, api] }
+        - name: date_from
+          in: query
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  orders:
+                    type: array
+                    items: { $ref: '#/components/schemas/Order' }
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+    post:
+      summary: Create manual order
+      description: Create a new order manually (POS, phone orders, etc.)
+      operationId: createManualOrder
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      product_variant_id:
+                        type: string
+                        format: uuid
+                      quantity:
+                        type: number
+                        minimum: 0.001
+                      unit_price:
+                        type: number
+                        minimum: 0
+                    required:
+                      - product_variant_id
+                      - quantity
+                      - unit_price
+                  minItems: 1
+                customer_name:
+                  type: string
+                customer_email:
+                  type: string
+                  format: email
+                customer_phone:
+                  type: string
+                customer_address:
+                  type: object
+                notes:
+                  type: string
+                inventory_id:
+                  type: string
+                  format: uuid
+                  description: "Inventory to deduct stock from (optional, uses default)"
+              required:
+                - items
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  order:
+                    $ref: '#/components/schemas/Order'
+        '400':
+          description: Invalid order data or insufficient stock
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /orders/{orderId}/fulfill:
+    post:
+      summary: Fulfill order
+      description: Mark order as fulfilled, deduct stock, and sync to channels
+      operationId: fulfillOrder
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inventory_id:
+                  type: string
+                  format: uuid
+                  description: "Specific inventory to use for fulfillment"
+                tracking_number:
+                  type: string
+                  description: "Shipping tracking number"
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Order fulfilled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  order:
+                    $ref: '#/components/schemas/Order'
+                  stock_updates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        product_variant_id:
+                          type: string
+                          format: uuid
+                        quantity_deducted:
+                          type: number
+        '400':
+          description: Cannot fulfill order (insufficient stock, invalid status)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # =========================================
+  # SYNC & AUDIT
+  # =========================================
+
+  /accounts/{accountId}/sync-logs:
+    get:
+      summary: Get sync logs
+      description: Retrieve audit logs for sync operations
+      operationId: getSyncLogs
+      security: [ BearerAuth: [] ]
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: channel_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { type: string, enum: [success, error, warning] }
+        - name: entity_type
+          in: query
+          schema: { type: string, enum: [product, order, inventory, stock] }
+        - name: date_from
+          in: query
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: Sync logs retrieved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  logs:
+                    type: array
+                    items: { $ref: '#/components/schemas/SyncLog' }
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+
+  # =========================================
+  # WEBHOOKS (for external integrations)
+  # =========================================
+
+  /webhooks/{channelType}/{accountId}:
+    post:
+      summary: Generic webhook endpoint
+      description: Receive webhooks from external channels (Shopify, etc.)
+      operationId: handleWebhook
+      parameters:
+        - name: channelType
+          in: path
+          required: true
+          schema: { type: string, enum: [shopify, siigo, woocommerce] }
+        - name: accountId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Webhook-Signature
+          in: header
+          schema: { type: string }
+          description: Webhook signature for verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Webhook payload (varies by channel type)
+      responses:
+        '200':
+          description: Webhook processed successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessResponse' }
+        '400':
+          description: Invalid webhook signature or payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }

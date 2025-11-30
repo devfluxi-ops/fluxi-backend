@@ -12,21 +12,16 @@ function getUserFromRequest(req: FastifyRequest): any {
   return decoded;
 }
 
-// Middleware helper
+// Middleware helper - updated for RLS
 async function assertAccountBelongsToUser(
-  supabase: any,
-  userId: string,
+  user: any,
   accountId: string
 ) {
-  const { data, error } = await supabase
-    .from('account_users')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('account_id', accountId)
-    .maybeSingle();
-
-  if (error || !data) {
-    throw new Error('Account not found for this user');
+  // Since JWT now includes account_id and we have RLS policies,
+  // we can rely on the database policies for security
+  // But we still validate the account_id matches the JWT claim
+  if (user.account_id !== accountId) {
+    throw new Error('Account access denied');
   }
 }
 
@@ -53,12 +48,15 @@ export async function productRoutes(app: FastifyInstance) {
             .send({ success: false, error: "account_id is required" });
         }
 
-        // Validate account belongs to user
-        await assertAccountBelongsToUser(supabase, user.userId, account_id);
+        // Validate account belongs to user (RLS handles this now)
+        await assertAccountBelongsToUser(user, account_id);
 
         let query = supabase
-          .from("product_catalog")
-          .select("*")
+          .from("products")
+          .select(`
+            id, account_id, name, sku, price, status, created_at, updated_at,
+            inventories!inner(quantity, warehouse)
+          `)
           .eq("account_id", account_id);
 
         if (search && search.trim() !== "") {
@@ -66,11 +64,10 @@ export async function productRoutes(app: FastifyInstance) {
         }
 
         if (status) {
-          query = query.eq("status_with_stock", status);
+          query = query.eq("status", status);
         }
 
         const { data, error } = await query
-          .order("stock", { ascending: false })
           .order("name")
           .limit(limit);
 
@@ -117,8 +114,8 @@ export async function productRoutes(app: FastifyInstance) {
         return reply.status(404).send({ success: false, error: "Product not found" });
       }
 
-      // Validate account access
-      await assertAccountBelongsToUser(supabase, user.userId, data.account_id);
+      // Validate account access (RLS handles this now)
+      await assertAccountBelongsToUser(user, data.account_id);
 
       // Calculate stock
       const stock = data.inventories?.reduce((sum: number, inv: any) => sum + inv.quantity, 0) || 0;
@@ -158,8 +155,8 @@ export async function productRoutes(app: FastifyInstance) {
       const user = getUserFromRequest(req);
       const { account_id, name, sku, price, stock = 0, status = 'active', channel_id, external_id } = req.body;
 
-      // Validate account access
-      await assertAccountBelongsToUser(supabase, user.userId, account_id);
+      // Validate account access (RLS handles this now)
+      await assertAccountBelongsToUser(user, account_id);
 
       if (!name || !sku || price === undefined) {
         return reply.status(400).send({
@@ -249,8 +246,8 @@ export async function productRoutes(app: FastifyInstance) {
         return reply.status(404).send({ success: false, error: "Product not found" });
       }
 
-      // Validate account access
-      await assertAccountBelongsToUser(supabase, user.userId, currentProduct.account_id);
+      // Validate account access (RLS handles this now)
+      await assertAccountBelongsToUser(user, currentProduct.account_id);
 
       // Update product
       const { data: product, error: productError } = await supabase
@@ -330,8 +327,8 @@ export async function productRoutes(app: FastifyInstance) {
         return reply.status(404).send({ success: false, error: "Product not found" });
       }
 
-      // Validate account access
-      await assertAccountBelongsToUser(supabase, user.userId, currentProduct.account_id);
+      // Validate account access (RLS handles this now)
+      await assertAccountBelongsToUser(user, currentProduct.account_id);
 
       // Delete inventory first
       await supabase

@@ -1,34 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import jwt from "jsonwebtoken";
 import { supabase } from "../supabaseClient";
-
-function getUserFromRequest(req: FastifyRequest): any {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    throw new Error("Missing Authorization header");
-  }
-  const token = authHeader.replace("Bearer ", "");
-  const decoded = jwt.verify(token, process.env.JWT_SECRET as string);
-  return decoded;
-}
-
-// Middleware helper
-async function assertAccountBelongsToUser(
-  supabase: any,
-  userId: string,
-  accountId: string
-) {
-  const { data, error } = await supabase
-    .from('account_users')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('account_id', accountId)
-    .maybeSingle();
-
-  if (error || !data) {
-    throw new Error('Account not found for this user');
-  }
-}
+import { getUserFromRequest, validateAccountAccess, validateOwnerPermissions } from "../utils/auth";
+import { sendSuccess, sendError, sendNotFound, sendForbidden } from "../utils/responses";
 
 export async function accountsRoutes(app: FastifyInstance) {
   // GET /accounts - List user's accounts
@@ -128,7 +101,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       const { accountId } = req.params;
 
       // Validate user has access to account
-      await assertAccountBelongsToUser(supabase, user.userId, accountId);
+      await validateAccountAccess(user, accountId);
 
       const { data, error } = await supabase
         .from("account_users")
@@ -167,6 +140,51 @@ export async function accountsRoutes(app: FastifyInstance) {
     }
   });
 
+  // GET /accounts/:accountId/users - Alias for members (for compatibility)
+  app.get("/accounts/:accountId/users", async (req: FastifyRequest<{ Params: { accountId: string } }>, reply: FastifyReply) => {
+    try {
+      const user = getUserFromRequest(req);
+      const { accountId } = req.params;
+
+      // Validate user has access to account
+      await validateAccountAccess(user, accountId);
+
+      const { data, error } = await supabase
+        .from("account_users")
+        .select(`
+          id,
+          account_id,
+          user_id,
+          role,
+          created_at,
+          users (
+            id,
+            email,
+            created_at
+          )
+        `)
+        .eq("account_id", accountId);
+
+      if (error) {
+        return reply.status(400).send({ success: false, error: error.message });
+      }
+
+      return reply.send({
+        success: true,
+        data: data.map((member: any) => ({
+          id: member.id,
+          account_id: member.account_id,
+          user_id: member.user_id,
+          role: member.role,
+          joined_at: member.created_at,
+          user: member.users
+        }))
+      });
+    } catch (error: any) {
+      return reply.status(401).send({ success: false, error: error.message });
+    }
+  });
+
   // POST /accounts/:accountId/members/invite - Invite member
   app.post("/accounts/:accountId/members/invite", async (req: FastifyRequest<{
     Params: { accountId: string },
@@ -178,7 +196,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       const { email, role } = req.body;
 
       // Validate user has access to account
-      await assertAccountBelongsToUser(supabase, user.userId, accountId);
+      await validateAccountAccess(user, accountId);
 
       if (!email || !role) {
         return reply.status(400).send({
@@ -258,7 +276,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       const { role } = req.body;
 
       // Validate user has access to account
-      await assertAccountBelongsToUser(supabase, user.userId, accountId);
+      await validateAccountAccess(user, accountId);
 
       if (!role) {
         return reply.status(400).send({
@@ -304,7 +322,7 @@ export async function accountsRoutes(app: FastifyInstance) {
       const { accountId, memberId } = req.params;
 
       // Validate user has access to account
-      await assertAccountBelongsToUser(supabase, user.userId, accountId);
+      await validateAccountAccess(user, accountId);
 
       const { error } = await supabase
         .from("account_users")

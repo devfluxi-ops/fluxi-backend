@@ -237,8 +237,15 @@ export async function orderRoutes(app: FastifyInstance) {
       await assertAccountBelongsToUser(supabase, user.userId, account_id);
 
       let query = supabase
-        .from("order_summary")
-        .select("*")
+        .from("orders")
+        .select(`
+          id, account_id, type, status, customer_name, customer_email,
+          customer_phone, notes, total_amount, created_at, updated_at,
+          order_items!inner(
+            id, quantity, unit_price, total_price,
+            products(id, name, sku)
+          )
+        `)
         .eq("account_id", account_id);
 
       if (status) {
@@ -270,8 +277,15 @@ export async function orderRoutes(app: FastifyInstance) {
       const { orderId } = req.params;
 
       const { data, error } = await supabase
-        .from("order_summary")
-        .select("*")
+        .from("orders")
+        .select(`
+          id, account_id, type, status, customer_name, customer_email,
+          customer_phone, notes, total_amount, created_at, updated_at,
+          order_items(
+            id, quantity, unit_price, total_price,
+            products(id, name, sku)
+          )
+        `)
         .eq("id", orderId)
         .single();
 

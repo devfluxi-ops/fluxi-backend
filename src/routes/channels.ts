@@ -1,34 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import jwt from "jsonwebtoken";
 import { supabase } from "../supabaseClient";
-
-function getUserFromRequest(req: FastifyRequest): any {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    throw new Error("Missing Authorization header");
-  }
-  const token = authHeader.replace("Bearer ", "");
-  const decoded = jwt.verify(token, process.env.JWT_SECRET as string);
-  return decoded;
-}
-
-// Middleware helper
-async function assertAccountBelongsToUser(
-  supabase: any,
-  userId: string,
-  accountId: string
-) {
-  const { data, error } = await supabase
-    .from('account_users')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('account_id', accountId)
-    .maybeSingle();
-
-  if (error || !data) {
-    throw new Error('Account not found for this user');
-  }
-}
+import { getUserFromRequest, validateAccountAccess } from "../utils/auth";
+import { sendSuccess, sendError, sendNotFound } from "../utils/responses";
 
 export type ChannelStatus = 'connected' | 'disconnected' | 'error';
 export type ChannelType = 'shopify' | 'siigo' | 'erp' | 'woocommerce' | 'prestashop';
@@ -62,6 +35,25 @@ interface ChannelInput {
 }
 
 export async function channelsRoutes(app: FastifyInstance) {
+  // GET /channel-types - List available channel types
+  app.get("/channel-types", async (req: FastifyRequest, reply: FastifyReply) => {
+    try {
+      // This endpoint doesn't require authentication as it just lists available types
+      const { data, error } = await supabase
+        .from("channel_types")
+        .select("*")
+        .order("name");
+
+      if (error) {
+        return reply.status(400).send({ success: false, error: error.message });
+      }
+
+      return reply.send({ success: true, channel_types: data || [] });
+    } catch (error: any) {
+      return reply.status(500).send({ success: false, error: error.message });
+    }
+  });
+
   // GET /channels - List channels for account
   app.get("/channels", async (req: FastifyRequest<{ Querystring: { account_id: string } }>, reply: FastifyReply) => {
     try {

@@ -1,34 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import jwt from "jsonwebtoken";
 import { supabase } from "../supabaseClient";
-
-function getUserFromRequest(req: FastifyRequest): any {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    throw new Error("Missing Authorization header");
-  }
-  const token = authHeader.replace("Bearer ", "");
-  const decoded = jwt.verify(token, process.env.JWT_SECRET as string);
-  return decoded;
-}
-
-// Middleware helper
-async function assertAccountBelongsToUser(
-  supabase: any,
-  userId: string,
-  accountId: string
-) {
-  const { data, error } = await supabase
-    .from('account_users')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('account_id', accountId)
-    .maybeSingle();
-
-  if (error || !data) {
-    throw new Error('Account not found for this user');
-  }
-}
+import { getUserFromRequest, validateAccountAccess } from "../utils/auth";
+import { sendSuccess, sendError, sendNotFound } from "../utils/responses";
 
 export async function inventoriesRoutes(app: FastifyInstance) {
   // PUT /inventories - Actualizar stock
@@ -59,7 +32,7 @@ export async function inventoriesRoutes(app: FastifyInstance) {
         return reply.status(404).send({ success: false, error: "Product not found" });
       }
 
-      await assertAccountBelongsToUser(supabase, user.userId, product.account_id);
+      await validateAccountAccess(user, product.account_id);
 
       // Insert/Update inventory
       const { data, error } = await supabase
