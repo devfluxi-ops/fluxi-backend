@@ -208,6 +208,162 @@ export async function channelsRoutes(app: FastifyInstance) {
             success: false,
             error: `Invalid channel_type_id. Must be one of: ${validTypes.join(', ')}`
           });
+        
+          // GET /channels/:id/products - List products from a specific channel
+          app.get("/channels/:id/products", async (req: FastifyRequest<{ Params: { id: string }, Querystring: { limit?: number; offset?: number } }>, reply: FastifyReply) => {
+            try {
+              getUserFromRequest(req);
+        
+              const { id } = req.params;
+              const { limit = 50, offset = 0 } = req.query;
+        
+              // Get channel details
+              const { data: channel, error: channelError } = await supabase
+                .from("channels")
+                .select("*")
+                .eq("id", id)
+                .single();
+        
+              if (channelError || !channel) {
+                return reply.status(404).send({ success: false, error: "Channel not found" });
+              }
+        
+              // For now, return mock data based on channel type
+              // In a real implementation, this would call the external API
+              let products: any[] = [];
+        
+              if (channel.channel_type_id === 'siigo') {
+                // Mock Siigo products
+                products = [
+                  {
+                    id: "siigo-001",
+                    name: "Producto Siigo 1",
+                    sku: "SKU001",
+                    price: 10000,
+                    description: "Producto de ejemplo de Siigo",
+                    external_id: "siigo-001"
+                  },
+                  {
+                    id: "siigo-002",
+                    name: "Producto Siigo 2",
+                    sku: "SKU002",
+                    price: 20000,
+                    description: "Otro producto de Siigo",
+                    external_id: "siigo-002"
+                  }
+                ];
+              } else if (channel.channel_type_id === 'shopify') {
+                // Mock Shopify products
+                products = [
+                  {
+                    id: "shopify-001",
+                    name: "Producto Shopify 1",
+                    sku: "SHOP001",
+                    price: 15000,
+                    description: "Producto de Shopify",
+                    external_id: "shopify-001"
+                  }
+                ];
+              }
+        
+              return reply.send({
+                success: true,
+                products,
+                total: products.length,
+                limit,
+                offset
+              });
+            } catch (error: any) {
+              return reply.status(401).send({ success: false, error: error.message });
+            }
+          });
+        
+          // POST /channels/:id/import-products - Import products from channel to catalog
+          app.post("/channels/:id/import-products", async (req: FastifyRequest<{ Params: { id: string }, Body: { product_ids: string[] } }>, reply: FastifyReply) => {
+            try {
+              getUserFromRequest(req);
+        
+              const { id } = req.params;
+              const { product_ids } = req.body;
+        
+              if (!product_ids || !Array.isArray(product_ids)) {
+                return reply.status(400).send({
+                  success: false,
+                  error: "product_ids array is required"
+                });
+              }
+        
+              // Get channel details
+              const { data: channel, error: channelError } = await supabase
+                .from("channels")
+                .select("*")
+                .eq("id", id)
+                .single();
+        
+              if (channelError || !channel) {
+                return reply.status(404).send({ success: false, error: "Channel not found" });
+              }
+        
+              // Mock import process
+              const importedProducts = product_ids.map(productId => ({
+                id: `imported-${productId}`,
+                channel_id: id,
+                external_product_id: productId,
+                status: "imported"
+              }));
+        
+              return reply.send({
+                success: true,
+                message: `Imported ${product_ids.length} products`,
+                imported_products: importedProducts
+              });
+            } catch (error: any) {
+              return reply.status(401).send({ success: false, error: error.message });
+            }
+          });
+        
+          // POST /channels/share-products - Share products between channels
+          app.post("/channels/share-products", async (req: FastifyRequest<{ Body: { product_ids: string[]; target_channel_ids: string[] } }>, reply: FastifyReply) => {
+            try {
+              getUserFromRequest(req);
+        
+              const { product_ids, target_channel_ids } = req.body;
+        
+              if (!product_ids || !Array.isArray(product_ids)) {
+                return reply.status(400).send({
+                  success: false,
+                  error: "product_ids array is required"
+                });
+              }
+        
+              if (!target_channel_ids || !Array.isArray(target_channel_ids)) {
+                return reply.status(400).send({
+                  success: false,
+                  error: "target_channel_ids array is required"
+                });
+              }
+        
+              // Mock sharing process
+              const sharedProducts = [];
+              for (const productId of product_ids) {
+                for (const targetChannelId of target_channel_ids) {
+                  sharedProducts.push({
+                    product_id: productId,
+                    target_channel_id: targetChannelId,
+                    status: "shared"
+                  });
+                }
+              }
+        
+              return reply.send({
+                success: true,
+                message: `Shared ${product_ids.length} products to ${target_channel_ids.length} channels`,
+                shared_products: sharedProducts
+              });
+            } catch (error: any) {
+              return reply.status(401).send({ success: false, error: error.message });
+            }
+          });
         }
       }
 
