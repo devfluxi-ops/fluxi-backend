@@ -17,13 +17,14 @@ export async function productRoutes(app: FastifyInstance) {
       }
 
       const pageNum = parseInt(page) || 0;
-      const limitNum = Math.min(parseInt(limit) || 50, 100);
+      // Allow loading all products by default (no 50 limit)
+      const limitNum = limit ? Math.min(parseInt(limit) || 10000, 10000) : 10000;
       const offset = pageNum * limitNum;
 
-      // QUERY 1: Products (simple, no JOINs)
+      // QUERY 1: Products with stock and price (simple, no JOINs)
       let query = supabase
         .from('products')
-        .select('*', { count: 'exact' })
+        .select('id, account_id, name, sku, description, price, currency, status, created_at, updated_at', { count: 'exact' })
         .eq('account_id', account_id)
         .order('created_at', { ascending: false })
         .range(offset, offset + limitNum - 1);

@@ -560,6 +560,7 @@ export async function channelsRoutes(app: FastifyInstance) {
               sku: staging.external_sku,
               description: staging.description,
               price: staging.price,
+              stock: staging.stock,
               currency: staging.currency,
               status: staging.status,
               updated_at: new Date().toISOString()

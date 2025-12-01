@@ -23,6 +23,32 @@ app.get("/health", async () => {
   return { status: "ok", service: "fluxi-backend" };
 });
 
+// Temporary admin route to add stock column
+app.post("/admin/add-stock-column", async (req, reply) => {
+  try {
+    const { supabaseAdmin } = await import("./supabaseClient");
+
+    // Try to execute raw SQL using admin client
+    // Note: This might not work, but let's try
+    const { data, error } = await supabaseAdmin
+      .from('products')
+      .select('id')
+      .limit(1);
+
+    if (error) {
+      return reply.status(500).send({ success: false, error: error.message });
+    }
+
+    return reply.send({
+      success: true,
+      message: "Database connection OK. Please run this SQL manually in Supabase dashboard:",
+      sql: "ALTER TABLE products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0;"
+    });
+  } catch (error: any) {
+    return reply.status(500).send({ success: false, error: error.message });
+  }
+});
+
 authRoutes(app);
 accountsRoutes(app);
 orderRoutes(app);
