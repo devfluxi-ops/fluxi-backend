@@ -72,10 +72,7 @@ export async function productRoutes(app: FastifyInstance) {
             last_sync_at,
             channels (
               name,
-              channel_type_id,
               channel_types (
-                id,
-                name,
                 slug
               )
             )
@@ -95,17 +92,9 @@ export async function productRoutes(app: FastifyInstance) {
 
         for (const link of channelLinks || []) {
           const channelInfo: any = (link as any).channels || {};
-          const channelTypeRelation = channelInfo.channel_types;
-          const channelTypeDetails = Array.isArray(channelTypeRelation)
-            ? channelTypeRelation[0]
-            : channelTypeRelation;
+          const channelTypeDetails = channelInfo.channel_types;
 
-          const channelType =
-            channelInfo.channel_type_id ||
-            channelInfo.type ||
-            channelTypeDetails?.slug ||
-            channelTypeDetails?.name ||
-            null;
+          const channelType = channelTypeDetails?.slug || null;
 
           const existing = channelsByProduct.get(link.product_id) || [];
           existing.push({
