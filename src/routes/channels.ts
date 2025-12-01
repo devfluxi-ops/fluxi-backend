@@ -561,27 +561,102 @@ export async function channelsRoutes(app: FastifyInstance) {
 
         const siigoData = await productsResponse.json();
 
-        // Normalize Siigo products to frontend format
-        products = siigoData.results?.map((p: any) => ({
-          id: p.id,
-          external_id: p.id,
-          name: p.name,
-          sku: p.code,
-          description: p.description || '',
-          price: p.prices?.[0]?.price_list?.[0]?.value || 0,
-          currency: p.prices?.[0]?.currency_code || 'COP',
-          stock: p.available_quantity || 0,
-          status: p.active ? 'active' : 'inactive',
-          source: 'siigo',
-          warehouses: p.warehouses || []
-        })) || [];
+        // Store/update products in local database
+        const syncedProducts = [];
+        for (const siigoProduct of siigoData.results || []) {
+          try {
+            // Check if product already exists in our catalog
+            const { data: existingChannelProduct } = await supabase
+              .from("channel_products")
+              .select("id, product_id")
+              .eq("channel_id", id)
+              .eq("external_id", siigoProduct.id)
+              .single();
+
+            let localProduct;
+
+            if (existingChannelProduct) {
+              // Get existing product
+              const { data: existingProduct } = await supabase
+                .from("products")
+                .select("id, name, sku, price, description, status")
+                .eq("id", existingChannelProduct.product_id)
+                .single();
+
+              if (existingProduct) {
+                // Update existing product
+                localProduct = existingProduct;
+                await supabase
+                  .from("products")
+                  .update({
+                    name: siigoProduct.name,
+                    description: siigoProduct.description || '',
+                    updated_at: new Date().toISOString()
+                  })
+                  .eq("id", localProduct.id);
+              }
+            } else {
+              // Create new product
+              const { data: newProduct, error: productError } = await supabase
+                .from("products")
+                .insert({
+                  account_id: channel.account_id,
+                  name: siigoProduct.name,
+                  sku: siigoProduct.code,
+                  price: siigoProduct.prices?.[0]?.price_list?.[0]?.value || 0,
+                  description: siigoProduct.description || '',
+                  status: siigoProduct.active ? 'active' : 'inactive'
+                })
+                .select()
+                .single();
+
+              if (productError) {
+                console.error('Error creating product:', productError);
+                continue;
+              }
+
+              localProduct = newProduct;
+
+              // Create channel product link
+              await supabase
+                .from("channel_products")
+                .insert({
+                  channel_id: id,
+                  product_id: localProduct.id,
+                  external_id: siigoProduct.id,
+                  last_sync_at: new Date().toISOString()
+                });
+            }
+
+            // Add to response
+            syncedProducts.push({
+              id: localProduct.id,
+              external_id: siigoProduct.id,
+              name: localProduct.name,
+              sku: localProduct.sku,
+              description: localProduct.description || '',
+              price: localProduct.price,
+              currency: siigoProduct.prices?.[0]?.currency_code || 'COP',
+              stock: siigoProduct.available_quantity || 0,
+              status: localProduct.status,
+              source: 'siigo',
+              warehouses: siigoProduct.warehouses || [],
+              last_sync_at: new Date().toISOString()
+            });
+
+          } catch (error) {
+            console.error('Error syncing Siigo product:', siigoProduct.id, error);
+            // Continue with next product
+          }
+        }
 
         return reply.send({
           success: true,
-          products,
-          total: siigoData.pagination?.total_results || products.length,
+          products: syncedProducts,
+          total: siigoData.pagination?.total_results || syncedProducts.length,
           page: siigoData.pagination?.page || 1,
-          limit
+          limit,
+          synced_count: syncedProducts.length
         });
 
       } else if (channel.channel_type_id === 'shopify') {
