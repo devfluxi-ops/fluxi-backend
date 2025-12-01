@@ -288,6 +288,8 @@ export async function channelsRoutes(app: FastifyInstance) {
         return reply.status(404).send({ success: false, error: "Channel not found" });
       }
 
+      console.log('TEST CHANNEL from DB:', JSON.stringify(channel, null, 2));
+
       let testResult = { success: false, message: "Test not implemented for this channel type" };
 
       // Test based on channel type
@@ -405,7 +407,12 @@ async function testSiigoConnection(channel: any) {
       authHeaders['Partner-Id'] = partnerId;
     }
 
-    const authResponse = await fetch(`${baseUrl}/auth`, {
+    const authUrl = `${baseUrl}/auth`;
+    console.log('Siigo auth URL:', authUrl);
+    console.log('Siigo auth headers:', JSON.stringify(authHeaders, null, 2));
+    console.log('Siigo auth body:', JSON.stringify({ username, access_key: apiKey }, null, 2));
+
+    const authResponse = await fetch(authUrl, {
       method: 'POST',
       headers: authHeaders,
       body: JSON.stringify({
@@ -414,15 +421,26 @@ async function testSiigoConnection(channel: any) {
       })
     });
 
+    console.log('Siigo auth status:', authResponse.status);
+    console.log('Siigo auth response headers:', JSON.stringify(Object.fromEntries(authResponse.headers), null, 2));
+
+    const responseText = await authResponse.text();
+    console.log('Siigo auth response body:', responseText);
+
     if (!authResponse.ok) {
-      const errorData = await authResponse.json().catch(() => ({}));
+      let errorData;
+      try {
+        errorData = JSON.parse(responseText);
+      } catch {
+        errorData = { message: responseText };
+      }
       return {
         success: false,
         message: `Siigo authentication failed: ${errorData.message || authResponse.statusText}`
       };
     }
 
-    const authData = await authResponse.json();
+    const authData = JSON.parse(responseText);
     const accessToken = authData.access_token;
 
     if (!accessToken) {
