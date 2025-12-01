@@ -152,10 +152,22 @@ export async function productRoutes(app: FastifyInstance) {
 
       // Create inventory stock if stock > 0
       if (stock > 0) {
+        // Get default inventory for the account
+        const { data: defaultInventory, error: inventoryError } = await supabase
+          .from("inventories")
+          .select("id")
+          .eq("account_id", account_id)
+          .eq("is_default", true)
+          .single();
+
+        if (inventoryError || !defaultInventory) {
+          return sendError(reply, "No default inventory found for this account", 400);
+        }
+
         const { error: stockError } = await supabase
           .from("inventory_stock_items")
           .insert({
-            inventory_id: 1, // Default inventory - this should be configurable
+            inventory_id: defaultInventory.id,
             product_variant_id: variant.id,
             quantity: stock
           });
@@ -258,10 +270,22 @@ export async function productRoutes(app: FastifyInstance) {
           .single();
 
         if (variant) {
+          // Get default inventory for the account
+          const { data: defaultInventory, error: inventoryError } = await supabase
+            .from("inventories")
+            .select("id")
+            .eq("account_id", currentProduct.account_id)
+            .eq("is_default", true)
+            .single();
+
+          if (inventoryError || !defaultInventory) {
+            return sendError(reply, "No default inventory found for this account", 400);
+          }
+
           const { error: stockError } = await supabase
             .from("inventory_stock_items")
             .upsert({
-              inventory_id: 1, // Default inventory
+              inventory_id: defaultInventory.id,
               product_variant_id: variant.id,
               quantity: stock,
               updated_at: new Date().toISOString()
