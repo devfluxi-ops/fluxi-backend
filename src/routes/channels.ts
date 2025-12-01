@@ -380,12 +380,42 @@ async function testSiigoConnection(channel: any) {
     }
 
     // Get Siigo API configuration from environment
-    const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com/v1';
+    const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com';
     const partnerId = process.env.SIIGO_PARTNER_ID;
 
-    // Test connection with Siigo API - try different endpoints
+    // Siigo requires OAuth authentication first
+    const authResponse = await fetch(`${baseUrl}/auth`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        username: username,
+        access_key: apiKey
+      })
+    });
+
+    if (!authResponse.ok) {
+      const errorData = await authResponse.json().catch(() => ({}));
+      return {
+        success: false,
+        message: `Siigo authentication failed: ${errorData.message || authResponse.statusText}`
+      };
+    }
+
+    const authData = await authResponse.json();
+    const accessToken = authData.access_token;
+
+    if (!accessToken) {
+      return {
+        success: false,
+        message: 'No access token received from Siigo authentication'
+      };
+    }
+
+    // Test connection with the obtained token
     const headers: Record<string, string> = {
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     };
 
@@ -394,59 +424,39 @@ async function testSiigoConnection(channel: any) {
       headers['Partner-Id'] = partnerId;
     }
 
-    // Try different Siigo endpoints to validate credentials
-    // First try: Get user information
-    let response = await fetch(`${baseUrl}/users`, {
+    // Try to get current user information
+    const testResponse = await fetch(`${baseUrl}/v1/users/current`, {
       method: 'GET',
       headers
     });
 
-    // If users endpoint fails, try account endpoint
-    if (!response.ok) {
-      response = await fetch(`${baseUrl}/account`, {
+    if (!testResponse.ok) {
+      // If current user fails, try companies endpoint
+      const companiesResponse = await fetch(`${baseUrl}/v1/companies`, {
         method: 'GET',
         headers
       });
-    }
 
-    // If account endpoint fails, try companies endpoint
-    if (!response.ok) {
-      response = await fetch(`${baseUrl}/companies`, {
-        method: 'GET',
-        headers
-      });
-    }
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      // Handle specific Siigo error codes
-      if (result.errors && result.errors.length > 0) {
-        const error = result.errors[0];
-        if (error.code === 'InvalidToken') {
-          return {
-            success: false,
-            message: 'Invalid Siigo API key or token expired'
-          };
-        }
+      if (!companiesResponse.ok) {
         return {
           success: false,
-          message: `Siigo API error: ${error.message}`
+          message: `Siigo API test failed: ${companiesResponse.status} ${companiesResponse.statusText}`
         };
       }
 
+      const companiesData = await companiesResponse.json();
       return {
-        success: false,
-        message: `Siigo API error: ${response.status} ${response.statusText}`,
-        details: result
+        success: true,
+        message: 'Siigo connection successful',
+        siigo_data: companiesData
       };
     }
 
-    // Success - return Siigo response
+    const userData = await testResponse.json();
     return {
       success: true,
       message: 'Siigo connection successful',
-      siigo_data: result.data || result
+      siigo_data: userData
     };
 
   } catch (error: any) {
