@@ -91,12 +91,12 @@ export async function channelsRoutes(app: FastifyInstance) {
     try {
       getUserFromRequest(req);
 
-      const { account_id, name, description, type, external_id, access_token, refresh_token, token_expires_at, config } = req.body;
+      const { account_id, name, description, type, external_id, config } = req.body;
 
-      if (!account_id || !type || !external_id) {
+      if (!account_id || !type) {
         return reply.status(400).send({
           success: false,
-          error: "account_id, type, and external_id are required"
+          error: "account_id and type are required"
         });
       }
 
@@ -122,15 +122,14 @@ export async function channelsRoutes(app: FastifyInstance) {
         });
       }
 
-      // Special handling for Siigo channels
+      // Process config based on channel type
       let processedConfig = config || {};
-      let processedAccessToken = access_token;
-      let processedExternalId = external_id;
+      let hasCredentials = false;
 
       if (type === 'siigo') {
-        // For Siigo, extract username and api_key from config
+        // For Siigo, validate username and api_key in config
         const username = config?.username || config?.email;
-        const apiKey = config?.api_key || access_token;
+        const apiKey = config?.api_key;
 
         if (!username || !apiKey) {
           return reply.status(400).send({
@@ -139,14 +138,25 @@ export async function channelsRoutes(app: FastifyInstance) {
           });
         }
 
-        // Store API key in access_token, username in external_id
-        processedAccessToken = apiKey;
-        processedExternalId = username;
         processedConfig = {
           ...config,
           username: username,
+          api_key: apiKey,
           configured_at: new Date().toISOString()
         };
+        hasCredentials = true;
+      } else if (type === 'shopify') {
+        // For Shopify, validate store_url and access_token
+        if (config?.store_url && config?.access_token) {
+          processedConfig = {
+            ...config,
+            configured_at: new Date().toISOString()
+          };
+          hasCredentials = true;
+        }
+      } else {
+        // For other types, check if any config is provided
+        hasCredentials = Object.keys(config || {}).length > 0;
       }
 
       const { data, error } = await supabase
@@ -156,12 +166,9 @@ export async function channelsRoutes(app: FastifyInstance) {
           name,
           description,
           type,
-          external_id: processedExternalId,
-          access_token: processedAccessToken,
-          refresh_token,
-          token_expires_at,
+          external_id,
           config: processedConfig,
-          status: processedAccessToken ? 'connected' : 'disconnected'
+          status: hasCredentials ? 'connected' : 'disconnected'
         }])
         .select()
         .single();
@@ -177,7 +184,7 @@ export async function channelsRoutes(app: FastifyInstance) {
   });
 
   // PUT /channels/:id - Update channel
-  app.put("/channels/:id", async (req: FastifyRequest<{ Params: { id: string }, Body: Partial<ChannelInput> }>, reply: FastifyReply) => {
+  app.put("/channels/:id", async (req: FastifyRequest<{ Params: { id: string }, Body: Partial<ChannelInput & { config?: any }> }>, reply: FastifyReply) => {
     try {
       getUserFromRequest(req);
 
@@ -195,10 +202,26 @@ export async function channelsRoutes(app: FastifyInstance) {
         }
       }
 
+      // Process config updates
+      let processedUpdates: any = { ...updates };
+      if (updates.config) {
+        processedUpdates.config = updates.config;
+        // Update configured_at if config is being updated
+        processedUpdates.config = {
+          ...updates.config,
+          configured_at: new Date().toISOString()
+        };
+      }
+
+      // Remove fields that don't exist in the table
+      delete processedUpdates.access_token;
+      delete processedUpdates.refresh_token;
+      delete processedUpdates.token_expires_at;
+
       const { data, error } = await supabase
         .from("channels")
         .update({
-          ...updates,
+          ...processedUpdates,
           updated_at: new Date().toISOString()
         })
         .eq("id", id)
@@ -295,11 +318,11 @@ export async function channelsRoutes(app: FastifyInstance) {
 async function testShopifyConnection(channel: any) {
   try {
     // Basic Shopify API test
-    const shopDomain = channel.external_id;
-    const accessToken = channel.access_token;
+    const shopDomain = channel.config?.store_url || channel.external_id;
+    const accessToken = channel.config?.access_token;
 
     if (!shopDomain || !accessToken) {
-      return { success: false, message: "Missing shop domain or access token" };
+      return { success: false, message: "Missing shop domain or access token in config" };
     }
 
     // Test with Shopify Admin API
@@ -345,14 +368,14 @@ async function testERPConnection(channel: any) {
 
 async function testSiigoConnection(channel: any) {
   try {
-    // Validate Siigo credentials
-    const apiKey = channel.access_token;
-    const username = channel.external_id;
+    // Validate Siigo credentials from config
+    const apiKey = channel.config?.api_key;
+    const username = channel.config?.username || channel.external_id;
 
     if (!apiKey || !username) {
       return {
         success: false,
-        message: 'Missing Siigo credentials (username or API key)'
+        message: 'Missing Siigo credentials (username or API key) in config'
       };
     }
 
