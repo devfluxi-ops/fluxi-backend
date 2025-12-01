@@ -127,14 +127,15 @@ export async function channelsRoutes(app: FastifyInstance) {
       let hasCredentials = false;
 
       if (type === 'siigo') {
-        // For Siigo, validate username and api_key in config
+        // For Siigo, validate username, api_key, and partner_id in config
         const username = config?.username || config?.email;
         const apiKey = config?.api_key;
+        const partnerId = config?.partner_id;
 
-        if (!username || !apiKey) {
+        if (!username || !apiKey || !partnerId) {
           return reply.status(400).send({
             success: false,
-            error: "Siigo channels require username and api_key in config"
+            error: "Siigo channels require username, api_key, and partner_id in config"
           });
         }
 
@@ -142,6 +143,7 @@ export async function channelsRoutes(app: FastifyInstance) {
           ...config,
           username: username,
           api_key: apiKey,
+          partner_id: partnerId,
           configured_at: new Date().toISOString()
         };
         hasCredentials = true;
@@ -371,6 +373,7 @@ async function testSiigoConnection(channel: any) {
     // Validate Siigo credentials from config
     const apiKey = channel.config?.api_key;
     const username = channel.config?.username || channel.external_id;
+    const partnerId = channel.config?.partner_id || process.env.SIIGO_PARTNER_ID;
 
     if (!apiKey || !username) {
       return {
@@ -380,15 +383,21 @@ async function testSiigoConnection(channel: any) {
     }
 
     // Get Siigo API configuration from environment
-    const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com';
-    const partnerId = process.env.SIIGO_PARTNER_ID;
+    const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com/v1';
 
     // Siigo requires OAuth authentication first
+    const authHeaders: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+
+    // Add Partner-Id if configured
+    if (partnerId && partnerId.trim()) {
+      authHeaders['Partner-Id'] = partnerId;
+    }
+
     const authResponse = await fetch(`${baseUrl}/auth`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: authHeaders,
       body: JSON.stringify({
         username: username,
         access_key: apiKey
@@ -414,49 +423,34 @@ async function testSiigoConnection(channel: any) {
     }
 
     // Test connection with the obtained token
-    const headers: Record<string, string> = {
+    const testHeaders: Record<string, string> = {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json'
     };
 
     // Add Partner-Id if configured
     if (partnerId && partnerId.trim()) {
-      headers['Partner-Id'] = partnerId;
+      testHeaders['Partner-Id'] = partnerId;
     }
 
-    // Try to get current user information
-    const testResponse = await fetch(`${baseUrl}/v1/users/current`, {
+    // Try to get account groups (simple endpoint to test connection)
+    const testResponse = await fetch(`${baseUrl}/account-groups`, {
       method: 'GET',
-      headers
+      headers: testHeaders
     });
 
     if (!testResponse.ok) {
-      // If current user fails, try companies endpoint
-      const companiesResponse = await fetch(`${baseUrl}/v1/companies`, {
-        method: 'GET',
-        headers
-      });
-
-      if (!companiesResponse.ok) {
-        return {
-          success: false,
-          message: `Siigo API test failed: ${companiesResponse.status} ${companiesResponse.statusText}`
-        };
-      }
-
-      const companiesData = await companiesResponse.json();
       return {
-        success: true,
-        message: 'Siigo connection successful',
-        siigo_data: companiesData
+        success: false,
+        message: `Siigo API test failed: ${testResponse.status} ${testResponse.statusText}`
       };
     }
 
-    const userData = await testResponse.json();
+    const accountGroupsData = await testResponse.json();
     return {
       success: true,
       message: 'Siigo connection successful',
-      siigo_data: userData
+      siigo_data: accountGroupsData
     };
 
   } catch (error: any) {
