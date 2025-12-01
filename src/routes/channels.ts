@@ -390,8 +390,9 @@ async function testSiigoConnection(channel: any) {
   const SIIGO_BASE_URL = process.env.SIIGO_API_BASE_URL || "https://api.siigo.com";
   const SIIGO_PARTNER_ID = process.env.SIIGO_PARTNER_ID || "fluxiBackend";
 
-  // Intentar ambas URLs, empezando por la más usada
+  // Intentar URLs en orden de probabilidad
   const authUrls = [
+    `${SIIGO_BASE_URL}/auth`,
     `${SIIGO_BASE_URL}/auth/token`,
     `${SIIGO_BASE_URL}/v1/auth`
   ];
