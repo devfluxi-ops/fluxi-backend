@@ -97,7 +97,20 @@ export async function channelsRoutes(app: FastifyInstance) {
     try {
       getUserFromRequest(req);
 
+      console.log('=== POST /channels DEBUG ===');
+      console.log('Headers:', JSON.stringify(req.headers, null, 2));
+      console.log('Body completo:', JSON.stringify(req.body, null, 2));
+      console.log('channel_type_id:', req.body.channel_type_id);
+      console.log('Tipo de channel_type_id:', typeof req.body.channel_type_id);
+
       const { account_id, name, description, channel_type_id, external_id, config } = req.body;
+
+      console.log('Valores extraídos:');
+      console.log('- account_id:', account_id);
+      console.log('- channel_type_id:', channel_type_id);
+      console.log('- name:', name);
+      console.log('- config:', config);
+      console.log('=== FIN DEBUG ===');
 
       if (!account_id || !channel_type_id) {
         return reply.status(400).send({
@@ -169,6 +182,17 @@ export async function channelsRoutes(app: FastifyInstance) {
         hasCredentials = Object.keys(config || {}).length > 0;
       }
 
+      console.log('Insertando en BD...');
+      console.log('Datos a insertar:', {
+        account_id,
+        name,
+        description,
+        type: channel_type_id,
+        external_id,
+        config: processedConfig,
+        status: hasCredentials ? 'connected' : 'disconnected'
+      });
+
       const { data, error } = await supabase
         .from("channels")
         .insert([{
@@ -184,8 +208,11 @@ export async function channelsRoutes(app: FastifyInstance) {
         .single();
 
       if (error) {
+        console.log('Error en insert:', error);
         return reply.status(400).send({ success: false, error: error.message });
       }
+
+      console.log('Canal creado exitosamente:', data);
 
       // Return with channel_type_id for API consistency
       const channelResponse = {
