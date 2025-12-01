@@ -381,110 +381,63 @@ async function testERPConnection(channel: any) {
 }
 
 async function testSiigoConnection(channel: any) {
-  try {
-    // Validate Siigo credentials from config
-    const apiKey = channel.config?.api_key;
-    const username = channel.config?.username || channel.external_id;
-    const partnerId = channel.config?.partner_id || process.env.SIIGO_PARTNER_ID;
+  const { username, api_key } = channel.config;
 
-    if (!apiKey || !username) {
-      return {
-        success: false,
-        message: 'Missing Siigo credentials (username or API key) in config'
-      };
-    }
+  if (!username || !api_key) {
+    return { success: false, message: "ERP configuration missing" };
+  }
 
-    // Get Siigo API configuration from environment
-    const baseUrl = process.env.SIIGO_API_BASE_URL || 'https://api.siigo.com/v1';
+  const SIIGO_BASE_URL = process.env.SIIGO_API_BASE_URL || "https://api.siigo.com";
+  const SIIGO_PARTNER_ID = process.env.SIIGO_PARTNER_ID || "fluxiBackend";
 
-    // Siigo requires OAuth authentication first
-    const authHeaders: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
+  // Intentar ambas URLs, empezando por la más usada
+  const authUrls = [
+    `${SIIGO_BASE_URL}/auth/token`,
+    `${SIIGO_BASE_URL}/v1/auth`
+  ];
 
-    // Add Partner-Id if configured
-    if (partnerId && partnerId.trim()) {
-      authHeaders['Partner-Id'] = partnerId;
-    }
+  let lastError = null;
 
-    const authUrl = `${baseUrl}/auth/token`;
-    console.log('Siigo auth URL:', authUrl);
-    console.log('Siigo auth headers:', JSON.stringify(authHeaders, null, 2));
-    console.log('Siigo auth body:', JSON.stringify({ username, access_key: apiKey }, null, 2));
+  for (const url of authUrls) {
+    console.log("[SIIGO TEST] Trying URL:", url);
+    console.log("[SIIGO TEST] Username:", username);
+    console.log("[SIIGO TEST] Partner-Id:", SIIGO_PARTNER_ID);
 
-    const authResponse = await fetch(authUrl, {
-      method: 'POST',
-      headers: authHeaders,
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Partner-Id": SIIGO_PARTNER_ID,
+      },
       body: JSON.stringify({
         username: username,
-        access_key: apiKey
-      })
+        access_key: api_key
+      }),
     });
 
-    console.log('Siigo auth status:', authResponse.status);
-    console.log('Siigo auth response headers:', JSON.stringify(Object.fromEntries(authResponse.headers), null, 2));
+    const raw = await response.text();
 
-    const responseText = await authResponse.text();
-    console.log('Siigo auth response body:', responseText);
+    console.log("[SIIGO TEST] Status:", response.status);
+    console.log("[SIIGO TEST] Raw response:", raw);
 
-    if (!authResponse.ok) {
-      let errorData;
+    if (response.ok) {
       try {
-        errorData = JSON.parse(responseText);
-      } catch {
-        errorData = { message: responseText };
+        const json = JSON.parse(raw);
+        return {
+          success: true,
+          message: "Siigo authentication success",
+          token: json.access_token || null,
+        };
+      } catch (e) {
+        return { success: false, message: "Invalid JSON auth response" };
       }
-      return {
-        success: false,
-        message: `Siigo authentication failed: ${errorData.message || authResponse.statusText}`
-      };
     }
 
-    const authData = JSON.parse(responseText);
-    const accessToken = authData.access_token;
-
-    if (!accessToken) {
-      return {
-        success: false,
-        message: 'No access token received from Siigo authentication'
-      };
-    }
-
-    // Test connection with the obtained token
-    const testHeaders: Record<string, string> = {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json'
-    };
-
-    // Add Partner-Id if configured
-    if (partnerId && partnerId.trim()) {
-      testHeaders['Partner-Id'] = partnerId;
-    }
-
-    // Try to get account groups (simple endpoint to test connection)
-    const testResponse = await fetch(`${baseUrl}/account-groups`, {
-      method: 'GET',
-      headers: testHeaders
-    });
-
-    if (!testResponse.ok) {
-      return {
-        success: false,
-        message: `Siigo API test failed: ${testResponse.status} ${testResponse.statusText}`
-      };
-    }
-
-    const accountGroupsData = await testResponse.json();
-    return {
-      success: true,
-      message: 'Siigo connection successful',
-      siigo_data: accountGroupsData
-    };
-
-  } catch (error: any) {
-    return {
-      success: false,
-      message: `Siigo connection failed: ${error.message}`
-    };
+    lastError = `Status ${response.status}: ${raw}`;
   }
+
+  return {
+    success: false,
+    message: `Siigo authentication failed: ${lastError}`
+  };
 }
