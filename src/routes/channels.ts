@@ -296,6 +296,8 @@ export async function channelsRoutes(app: FastifyInstance) {
           testResult = await testShopifyConnection(channel);
           break;
         case 'siigo':
+          testResult = await testSiigoConnection(channel);
+          break;
         case 'erp':
           testResult = await testERPConnection(channel);
           break;
