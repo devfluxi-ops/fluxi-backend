@@ -151,7 +151,6 @@ export async function channelsRoutes(app: FastifyInstance) {
           ...config,
           username: username,
           api_key: apiKey,
-          partner_id: partnerId, // Backend-managed
           configured_at: new Date().toISOString()
         };
         hasCredentials = true;
@@ -404,12 +403,14 @@ async function testSiigoConnection(channel: any) {
     console.log("[SIIGO TEST] Username:", username);
     console.log("[SIIGO TEST] Partner-Id:", SIIGO_PARTNER_ID);
 
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Partner-Id": SIIGO_PARTNER_ID,
+    };
+
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Partner-Id": SIIGO_PARTNER_ID,
-      },
+      headers,
       body: JSON.stringify({
         username: username,
         access_key: api_key
