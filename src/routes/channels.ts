@@ -199,7 +199,7 @@ export async function channelsRoutes(app: FastifyInstance) {
           account_id,
           name,
           description,
-          type: channel_type_id,
+          channel_type_id,
           external_id,
           config: processedConfig,
           status: hasCredentials ? 'connected' : 'disconnected'
@@ -214,14 +214,7 @@ export async function channelsRoutes(app: FastifyInstance) {
 
       console.log('Canal creado exitosamente:', data);
 
-      // Return with channel_type_id for API consistency
-      const channelResponse = {
-        ...data,
-        channel_type_id: data.type
-      };
-      delete channelResponse.type;
-
-      return reply.send({ success: true, channel: channelResponse });
+      return reply.send({ success: true, channel: data });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
     }
@@ -276,14 +269,7 @@ export async function channelsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ success: false, error: error.message });
       }
 
-      // Return with channel_type_id for API consistency
-      const channelResponse = {
-        ...data,
-        channel_type_id: data.type
-      };
-      delete channelResponse.type;
-
-      return reply.send({ success: true, channel: channelResponse });
+      return reply.send({ success: true, channel: data });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
     }
