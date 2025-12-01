@@ -4,10 +4,10 @@ import { getUserFromRequest, validateAccountAccess } from "../utils/auth";
 import { sendSuccess, sendError, sendNotFound } from "../utils/responses";
 
 export async function productRoutes(app: FastifyInstance) {
-  // GET /products - List products for account
-  app.get('/products', async (request: FastifyRequest<{ Querystring: { account_id: string; include_channels?: string } }>, reply: FastifyReply) => {
+  // GET /products - List products for account with pagination
+  app.get('/products', async (request: FastifyRequest<{ Querystring: { account_id: string; include_channels?: string; page?: string; limit?: string; search?: string; status?: string } }>, reply: FastifyReply) => {
     try {
-      const { account_id, include_channels } = request.query;
+      const { account_id, include_channels, page = '0', limit = '50', search, status } = request.query;
 
       if (!account_id) {
         return reply.status(400).send({
@@ -16,12 +16,33 @@ export async function productRoutes(app: FastifyInstance) {
         });
       }
 
-      // Always fetch products first
-      const { data: productsData, error: productsError } = await supabase
+      const pageNum = parseInt(page) || 0;
+      const limitNum = Math.min(parseInt(limit) || 50, 100); // Max 100
+      const offset = pageNum * limitNum;
+
+      // Build base query for products
+      let productsQuery = supabase
         .from('products')
-        .select('*')
-        .eq('account_id', account_id)
-        .order('created_at', { ascending: false });
+        .select('*', { count: 'exact' })
+        .eq('account_id', account_id);
+
+      // Add search filter
+      if (search) {
+        productsQuery = productsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
+      }
+
+      // Add status filter
+      if (status && status !== 'all') {
+        productsQuery = productsQuery.eq('status', status);
+      }
+
+      // Add pagination and ordering
+      productsQuery = productsQuery
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limitNum - 1);
+
+      // Execute products query
+      const { data: productsData, error: productsError, count } = await productsQuery;
 
       if (productsError) {
         request.log.error(productsError);
@@ -34,6 +55,7 @@ export async function productRoutes(app: FastifyInstance) {
 
       let products = productsData || [];
 
+      // Fetch channels only if requested and there are products
       if (include_channels === 'true' && products.length > 0) {
         const productIds = products.map((p) => p.id);
 
@@ -53,7 +75,8 @@ export async function productRoutes(app: FastifyInstance) {
               channel_type_id,
               channel_types (
                 id,
-                name
+                name,
+                slug
               )
             )
           `)
@@ -80,7 +103,7 @@ export async function productRoutes(app: FastifyInstance) {
           const channelType =
             channelInfo.channel_type_id ||
             channelInfo.type ||
-            channelTypeDetails?.id ||
+            channelTypeDetails?.slug ||
             channelTypeDetails?.name ||
             null;
 
@@ -109,10 +132,18 @@ export async function productRoutes(app: FastifyInstance) {
         }));
       }
 
+      const total = count || 0;
+
       return reply.send({
         success: true,
         products,
-        total: products.length
+        total,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum)
+        }
       });
     } catch (error: any) {
       request.log.error(error);
