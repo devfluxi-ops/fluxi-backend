@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS public.channels (
     config JSONB DEFAULT '{}'::jsonb,
     status VARCHAR(20) DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected', 'error')),
     last_error TEXT,
+    last_sync_at TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -208,6 +209,34 @@ CREATE TABLE IF NOT EXISTS public.channel_products (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(channel_id, product_id, product_variant_id)
 );
+
+-- Staging table for channel products
+CREATE TABLE IF NOT EXISTS public.channel_products_staging (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id UUID NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    channel_id UUID NOT NULL REFERENCES public.channels(id) ON DELETE CASCADE,
+    external_id VARCHAR(255) NOT NULL,
+    external_sku VARCHAR(255) NOT NULL,
+    name VARCHAR(500) NOT NULL,
+    description TEXT,
+    price DECIMAL(15,2) DEFAULT 0,
+    currency VARCHAR(10) DEFAULT 'COP',
+    stock INTEGER DEFAULT 0,
+    status VARCHAR(50) DEFAULT 'active',
+    raw_data JSONB,
+    import_status VARCHAR(50) DEFAULT 'pending',
+    imported_at TIMESTAMP,
+    imported_product_id UUID REFERENCES public.products(id),
+    synced_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT unique_staging_product_per_channel UNIQUE (channel_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_staging_account ON public.channel_products_staging(account_id);
+CREATE INDEX IF NOT EXISTS idx_staging_channel ON public.channel_products_staging(channel_id);
+CREATE INDEX IF NOT EXISTS idx_staging_import_status ON public.channel_products_staging(import_status);
+CREATE INDEX IF NOT EXISTS idx_staging_external_sku ON public.channel_products_staging(external_sku);
 
 -- =========================================
 -- 14. SYNC_LOGS TABLE

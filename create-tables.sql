@@ -78,6 +78,7 @@ CREATE TABLE channels (
   name VARCHAR(255) NOT NULL,
   status VARCHAR(20) DEFAULT 'disconnected' CHECK (status IN ('connected', 'disconnected', 'error', 'syncing')),
   is_primary BOOLEAN DEFAULT FALSE,
+  last_sync_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -177,6 +178,34 @@ CREATE TABLE channel_products (
   UNIQUE(channel_id, product_variant_id),
   UNIQUE(channel_id, external_id)
 );
+
+-- Staging table for channel product imports
+CREATE TABLE IF NOT EXISTS channel_products_staging (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  channel_id UUID NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  external_id VARCHAR(255) NOT NULL,
+  external_sku VARCHAR(255) NOT NULL,
+  name VARCHAR(500) NOT NULL,
+  description TEXT,
+  price DECIMAL(15,2) DEFAULT 0,
+  currency VARCHAR(10) DEFAULT 'COP',
+  stock INTEGER DEFAULT 0,
+  status VARCHAR(50) DEFAULT 'active',
+  raw_data JSONB,
+  import_status VARCHAR(50) DEFAULT 'pending',
+  imported_at TIMESTAMPTZ,
+  imported_product_id UUID REFERENCES products(id),
+  synced_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT unique_staging_product_per_channel UNIQUE (channel_id, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_staging_account ON channel_products_staging(account_id);
+CREATE INDEX IF NOT EXISTS idx_staging_channel ON channel_products_staging(channel_id);
+CREATE INDEX IF NOT EXISTS idx_staging_import_status ON channel_products_staging(import_status);
+CREATE INDEX IF NOT EXISTS idx_staging_external_sku ON channel_products_staging(external_sku);
 
 -- =========================================
 -- 5. ORDER MANAGEMENT

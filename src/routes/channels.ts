@@ -100,13 +100,12 @@ export async function channelsRoutes(app: FastifyInstance) {
     });
   });
 
-  // POST /channels/:channelId/sync - Sync products from Siigo with pagination
+  // POST /channels/:channelId/sync - Sync products from Siigo into staging (paginated)
   app.post("/channels/:channelId/sync", async (req: FastifyRequest<{ Params: { channelId: string }, Body: { account_id?: string } }>, reply: FastifyReply) => {
     try {
       const { channelId } = req.params;
       const { account_id } = req.body || {};
 
-      // Get channel details
       const { data: channel, error: channelError } = await supabase
         .from("channels")
         .select("id, account_id, name, channel_type_id, config")
@@ -114,24 +113,15 @@ export async function channelsRoutes(app: FastifyInstance) {
         .single();
 
       if (channelError || !channel) {
-        return reply.status(404).send({
-          success: false,
-          message: "Channel not found"
-        });
+        return reply.status(404).send({ success: false, message: "Channel not found" });
       }
 
       if (account_id && channel.account_id !== account_id) {
-        return reply.status(400).send({
-          success: false,
-          message: "Channel does not belong to the provided account_id"
-        });
+        return reply.status(400).send({ success: false, message: "Channel does not belong to the provided account_id" });
       }
 
       if (channel.channel_type_id !== "siigo") {
-        return reply.status(400).send({
-          success: false,
-          message: "Only Siigo channels are supported for sync"
-        });
+        return reply.status(400).send({ success: false, message: "Only Siigo channels are supported for sync" });
       }
 
       const { username, api_key, partner_id } = channel.config || {};
@@ -139,10 +129,7 @@ export async function channelsRoutes(app: FastifyInstance) {
       const siigoBaseUrl = process.env.SIIGO_API_BASE_URL || "https://api.siigo.com";
 
       if (!username || !api_key) {
-        return reply.status(400).send({
-          success: false,
-          message: "Siigo credentials not configured"
-        });
+        return reply.status(400).send({ success: false, message: "Siigo credentials not configured" });
       }
 
       // Authenticate with Siigo
@@ -152,50 +139,36 @@ export async function channelsRoutes(app: FastifyInstance) {
           "Content-Type": "application/json",
           "Partner-Id": siigoPartnerId
         },
-        body: JSON.stringify({
-          username,
-          access_key: api_key
-        })
+        body: JSON.stringify({ username, access_key: api_key })
       });
 
       if (!authResponse.ok) {
         const errorText = await authResponse.text();
 
-        await supabase
-          .from("channels")
-          .update({
-            status: "error",
-            last_error: `Authentication failed: ${authResponse.status} ${errorText}`,
-            updated_at: new Date().toISOString()
-          })
-          .eq("id", channelId);
+        await supabase.from("channels").update({
+          status: "error",
+          last_error: `Authentication failed: ${authResponse.status} ${errorText}`,
+          updated_at: new Date().toISOString()
+        }).eq("id", channelId);
 
-        await supabase
-          .from("sync_logs")
-          .insert([{
-            account_id: channel.account_id,
-            channel_id: channelId,
-            event_type: "channel_product_sync",
-            status: "error",
-            payload: { error: "authentication_failed" }
-          }]);
+        await supabase.from("sync_logs").insert([{
+          account_id: channel.account_id,
+          channel_id: channelId,
+          event_type: "channel_product_sync",
+          status: "error",
+          payload: { error: "authentication_failed" }
+        }]);
 
-        return reply.status(502).send({
-          success: false,
-          message: "Failed to authenticate with Siigo"
-        });
+        return reply.status(502).send({ success: false, message: "Failed to authenticate with Siigo" });
       }
 
       const { access_token } = await authResponse.json();
 
       if (!access_token) {
-        return reply.status(502).send({
-          success: false,
-          message: "No access token received from Siigo"
-        });
+        return reply.status(502).send({ success: false, message: "No access token received from Siigo" });
       }
 
-      // Fetch all products from Siigo with pagination
+      // Fetch all products with pagination
       const allSiigoProducts: any[] = [];
       const pageSize = 100;
       let page = 0;
@@ -214,29 +187,21 @@ export async function channelsRoutes(app: FastifyInstance) {
         if (!productsResponse.ok) {
           const errorText = await productsResponse.text();
 
-          await supabase
-            .from("channels")
-            .update({
-              status: "error",
-              last_error: `Products fetch failed: ${productsResponse.status} ${errorText}`,
-              updated_at: new Date().toISOString()
-            })
-            .eq("id", channelId);
+          await supabase.from("channels").update({
+            status: "error",
+            last_error: `Products fetch failed: ${productsResponse.status} ${errorText}`,
+            updated_at: new Date().toISOString()
+          }).eq("id", channelId);
 
-          await supabase
-            .from("sync_logs")
-            .insert([{
-              account_id: channel.account_id,
-              channel_id: channelId,
-              event_type: "channel_product_sync",
-              status: "error",
-              payload: { error: "products_fetch_failed" }
-            }]);
+          await supabase.from("sync_logs").insert([{
+            account_id: channel.account_id,
+            channel_id: channelId,
+            event_type: "channel_product_sync",
+            status: "error",
+            payload: { error: "products_fetch_failed" }
+          }]);
 
-          return reply.status(502).send({
-            success: false,
-            message: "Failed to fetch products from Siigo"
-          });
+          return reply.status(502).send({ success: false, message: "Failed to fetch products from Siigo" });
         }
 
         const productsData = await productsResponse.json();
@@ -244,7 +209,6 @@ export async function channelsRoutes(app: FastifyInstance) {
 
         if (results.length > 0) {
           allSiigoProducts.push(...results);
-
           const totalResults = productsData.pagination?.total_results || 0;
           hasMore = allSiigoProducts.length < totalResults;
           page++;
@@ -253,7 +217,17 @@ export async function channelsRoutes(app: FastifyInstance) {
         }
       }
 
-      let syncedCount = 0;
+      // Track existing staging entries to detect new vs updated
+      const { data: existingStaging } = await supabase
+        .from("channel_products_staging")
+        .select("external_id")
+        .eq("channel_id", channelId)
+        .eq("account_id", channel.account_id);
+
+      const existingExternalIds = new Set((existingStaging || []).map((row: any) => row.external_id));
+
+      let newProducts = 0;
+      let updatedProducts = 0;
       const errors: { sku?: string; error: string }[] = [];
 
       for (const sp of allSiigoProducts) {
@@ -261,84 +235,73 @@ export async function channelsRoutes(app: FastifyInstance) {
           const price = sp?.prices?.[0]?.price_list?.[0]?.value != null
             ? Number(sp.prices[0].price_list[0].value)
             : 0;
-
           const currency = sp?.prices?.[0]?.price_list?.[0]?.currency_code || "COP";
           const status = sp?.active ? "active" : "inactive";
 
-          const { data: product, error: upsertError } = await supabase
-            .from("products")
-            .upsert({
-              account_id: channel.account_id,
-              sku: sp.code,
-              name: sp.name,
-              price,
-              description: sp.description || "",
-              currency,
-              status
-            }, { onConflict: "account_id,sku" })
-            .select("id")
-            .single();
+          const payload = {
+            account_id: channel.account_id,
+            channel_id: channel.id,
+            external_id: sp.id,
+            external_sku: sp.code,
+            name: sp.name,
+            description: sp.description || "",
+            price,
+            currency,
+            stock: sp?.available_quantity || 0,
+            status,
+            raw_data: sp,
+            synced_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
 
-          if (upsertError || !product) {
-            throw new Error(upsertError?.message || "Failed to upsert product");
+          const { error: stagingError } = await supabase
+            .from("channel_products_staging")
+            .upsert(payload, { onConflict: "channel_id,external_id" });
+
+          if (stagingError) {
+            throw new Error(stagingError.message);
           }
 
-          const { error: linkError } = await supabase
-            .from("channel_products")
-            .upsert({
-              product_id: product.id,
-              channel_id: channel.id,
-              external_id: sp.id,
-              external_sku: sp.code,
-              synced_at: new Date().toISOString(),
-              sync_status: "synced",
-              last_error: null
-            }, { onConflict: "product_id,channel_id" });
-
-          if (linkError) {
-            throw new Error(linkError.message);
+          if (existingExternalIds.has(sp.id)) {
+            updatedProducts++;
+          } else {
+            newProducts++;
+            existingExternalIds.add(sp.id);
           }
-
-          syncedCount++;
         } catch (productError: any) {
-          errors.push({
-            sku: sp?.code,
-            error: productError.message
-          });
+          errors.push({ sku: sp?.code, error: productError.message });
         }
       }
 
-      await supabase
-        .from("channels")
-        .update({
-          status: errors.length ? "error" : "connected",
-          last_error: errors.length ? errors[0].error : null,
-          updated_at: new Date().toISOString()
-        })
-        .eq("id", channelId);
+      await supabase.from("channels").update({
+        status: errors.length ? "warning" : "connected",
+        last_error: errors.length ? errors[0].error : null,
+        last_sync_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).eq("id", channelId);
 
-      await supabase
-        .from("sync_logs")
-        .insert([{
-          account_id: channel.account_id,
-          channel_id: channelId,
-          event_type: "channel_product_sync",
-          status: errors.length ? "warning" : "completed",
-          records_processed: syncedCount,
-          payload: {
-            source: "siigo",
-            synced_count: syncedCount,
-            total_from_siigo: allSiigoProducts.length,
-            errors: errors.slice(0, 10)
-          }
-        }]);
+      await supabase.from("sync_logs").insert([{
+        account_id: channel.account_id,
+        channel_id: channelId,
+        event_type: "channel_product_sync",
+        status: errors.length ? "warning" : "completed",
+        records_processed: newProducts + updatedProducts,
+        payload: {
+          source: "siigo",
+          new_products: newProducts,
+          updated_products: updatedProducts,
+          total_from_siigo: allSiigoProducts.length,
+          errors: errors.slice(0, 10)
+        }
+      }]);
 
       return reply.send({
         success: true,
-        synced_count: syncedCount,
+        new_products: newProducts,
+        updated_products: updatedProducts,
         total_from_siigo: allSiigoProducts.length,
         errors: errors.length ? errors.slice(0, 10) : undefined,
-        message: `${syncedCount} productos sincronizados desde Siigo`
+        message: `${newProducts} nuevos, ${updatedProducts} actualizados de ${allSiigoProducts.length} productos`
       });
     } catch (error: any) {
       console.error("Error syncing channel products:", error);
@@ -447,6 +410,275 @@ export async function channelsRoutes(app: FastifyInstance) {
       return reply.send({ success: true, channel: data });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
+    }
+  });
+
+  // GET /channels/:channelId/staging-products - List staged products before import
+  app.get("/channels/:channelId/staging-products", async (req: FastifyRequest<{ Params: { channelId: string }, Querystring: { account_id?: string; status?: string; search?: string; page?: number; limit?: number } }>, reply: FastifyReply) => {
+    try {
+      const { channelId } = req.params;
+      const { account_id, status, search, page = 0, limit = 50 } = req.query as any;
+
+      if (!account_id) {
+        return reply.status(400).send({ success: false, message: "account_id is required" });
+      }
+
+      const pageNumber = Number(page) || 0;
+      const limitNumber = Math.min(Math.max(Number(limit) || 50, 1), 200);
+
+      let stagingQuery = supabase
+        .from("channel_products_staging")
+        .select("*")
+        .eq("channel_id", channelId)
+        .eq("account_id", account_id);
+
+      if (status) {
+        stagingQuery = stagingQuery.eq("import_status", status);
+      }
+
+      if (search) {
+        stagingQuery = stagingQuery.or(`name.ilike.%${search}%,external_sku.ilike.%${search}%`);
+      }
+
+      stagingQuery = stagingQuery
+        .order("synced_at", { ascending: false })
+        .range(pageNumber * limitNumber, pageNumber * limitNumber + limitNumber - 1);
+
+      const { data: stagingProducts, error: stagingError } = await stagingQuery;
+
+      if (stagingError) {
+        return reply.status(500).send({ success: false, message: "Error fetching staging products", error: stagingError.message });
+      }
+
+      const externalSkus = (stagingProducts || []).map((p) => p.external_sku).filter(Boolean);
+
+      let inventoryMap = new Map<string, any>();
+      if (externalSkus.length > 0) {
+        const { data: inventoryProducts, error: inventoryError } = await supabase
+          .from("products")
+          .select("id, sku, price, status")
+          .eq("account_id", account_id)
+          .in("sku", externalSkus);
+
+        if (inventoryError) {
+          return reply.status(500).send({ success: false, message: "Error checking existing inventory", error: inventoryError.message });
+        }
+
+        inventoryMap = new Map((inventoryProducts || []).map((p) => [p.sku, p]));
+      }
+
+      const enriched = (stagingProducts || []).map((p) => {
+        const existing = inventoryMap.get(p.external_sku);
+        return {
+          ...p,
+          exists_in_inventory: !!existing,
+          existing_product_id: existing?.id ?? null,
+          inventory_price: existing?.price ?? null,
+          inventory_stock: (existing as any)?.stock ?? null
+        };
+      });
+
+      const [pendingCountRes, importedCountRes, totalCountRes] = await Promise.all([
+        supabase.from("channel_products_staging").select("*", { count: "exact", head: true }).eq("channel_id", channelId).eq("account_id", account_id).eq("import_status", "pending"),
+        supabase.from("channel_products_staging").select("*", { count: "exact", head: true }).eq("channel_id", channelId).eq("account_id", account_id).eq("import_status", "imported"),
+        supabase.from("channel_products_staging").select("*", { count: "exact", head: true }).eq("channel_id", channelId).eq("account_id", account_id)
+      ]);
+
+      return reply.send({
+        success: true,
+        products: enriched,
+        counts: {
+          pending_count: pendingCountRes.count ?? 0,
+          imported_count: importedCountRes.count ?? 0,
+          total_count: totalCountRes.count ?? 0
+        },
+        pagination: {
+          page: pageNumber,
+          limit: limitNumber,
+          total: totalCountRes.count ?? 0
+        }
+      });
+    } catch (error: any) {
+      return reply.status(500).send({ success: false, message: "Internal server error", error: error.message });
+    }
+  });
+
+  // POST /channels/:channelId/import-to-inventory - Import staged products into main catalog
+  app.post("/channels/:channelId/import-to-inventory", async (req: FastifyRequest<{ Params: { channelId: string }, Body: { account_id: string; staging_product_ids?: string[]; import_all?: boolean } }>, reply: FastifyReply) => {
+    try {
+      const { channelId } = req.params;
+      const { account_id, staging_product_ids = [], import_all = false } = req.body;
+
+      if (!account_id) {
+        return reply.status(400).send({ success: false, message: "account_id is required" });
+      }
+
+      let stagingProducts: any[] = [];
+
+      if (import_all) {
+        const { data, error } = await supabase
+          .from("channel_products_staging")
+          .select("*")
+          .eq("channel_id", channelId)
+          .eq("account_id", account_id)
+          .eq("import_status", "pending");
+
+        if (error) {
+          return reply.status(500).send({ success: false, message: "Error fetching staging products", error: error.message });
+        }
+
+        stagingProducts = data || [];
+      } else {
+        if (!Array.isArray(staging_product_ids) || staging_product_ids.length === 0) {
+          return reply.status(400).send({ success: false, message: "staging_product_ids is required when import_all is false" });
+        }
+
+        const { data, error } = await supabase
+          .from("channel_products_staging")
+          .select("*")
+          .in("id", staging_product_ids)
+          .eq("channel_id", channelId)
+          .eq("account_id", account_id);
+
+        if (error) {
+          return reply.status(500).send({ success: false, message: "Error fetching selected staging products", error: error.message });
+        }
+
+        stagingProducts = data || [];
+      }
+
+      let importedCount = 0;
+      const errors: { sku?: string; error: string }[] = [];
+
+      for (const staging of stagingProducts) {
+        try {
+          const { data: product, error: productError } = await supabase
+            .from("products")
+            .upsert({
+              account_id,
+              name: staging.name,
+              sku: staging.external_sku,
+              description: staging.description,
+              price: staging.price,
+              currency: staging.currency,
+              status: staging.status,
+              updated_at: new Date().toISOString()
+            }, { onConflict: "account_id,sku" })
+            .select("id")
+            .single();
+
+          if (productError || !product) {
+            throw new Error(productError?.message || "Failed to upsert product");
+          }
+
+          const { error: channelProductError } = await supabase
+            .from("channel_products")
+            .upsert({
+              product_id: product.id,
+              channel_id: channelId,
+              external_id: staging.external_id,
+              external_sku: staging.external_sku,
+              synced_at: new Date().toISOString(),
+              sync_status: "synced",
+              last_error: null
+            }, { onConflict: "product_id,channel_id" });
+
+          if (channelProductError) {
+            throw new Error(channelProductError.message);
+          }
+
+          const { error: updateStagingError } = await supabase
+            .from("channel_products_staging")
+            .update({
+              import_status: "imported",
+              imported_at: new Date().toISOString(),
+              imported_product_id: product.id,
+              updated_at: new Date().toISOString()
+            })
+            .eq("id", staging.id);
+
+          if (updateStagingError) {
+            throw new Error(updateStagingError.message);
+          }
+
+          importedCount++;
+        } catch (productError: any) {
+          errors.push({ sku: staging?.external_sku, error: productError.message });
+
+          await supabase
+            .from("channel_products_staging")
+            .update({ import_status: "error", updated_at: new Date().toISOString() })
+            .eq("id", staging.id);
+        }
+      }
+
+      return reply.send({
+        success: true,
+        imported_count: importedCount,
+        skipped_count: 0,
+        errors: errors.length ? errors : undefined,
+        message: `${importedCount} productos importados al inventario principal`
+      });
+    } catch (error: any) {
+      return reply.status(500).send({ success: false, message: "Internal server error during import", error: error.message });
+    }
+  });
+
+  // DELETE /channels/:channelId/staging-products - Remove staged products
+  app.delete("/channels/:channelId/staging-products", async (req: FastifyRequest<{ Params: { channelId: string }, Body: { account_id: string; staging_product_ids?: string[]; delete_all_skipped?: boolean } }>, reply: FastifyReply) => {
+    try {
+      const { channelId } = req.params;
+      const { account_id, staging_product_ids = [], delete_all_skipped = false } = req.body;
+
+      if (!account_id) {
+        return reply.status(400).send({ success: false, message: "account_id is required" });
+      }
+
+      let deleteQuery = supabase
+        .from("channel_products_staging")
+        .delete()
+        .eq("channel_id", channelId)
+        .eq("account_id", account_id);
+
+      if (delete_all_skipped) {
+        deleteQuery = deleteQuery.eq("import_status", "skipped");
+      } else {
+        if (!Array.isArray(staging_product_ids) || staging_product_ids.length === 0) {
+          return reply.status(400).send({ success: false, message: "staging_product_ids is required when delete_all_skipped is false" });
+        }
+        deleteQuery = deleteQuery.in("id", staging_product_ids);
+      }
+
+      const { error } = await deleteQuery;
+
+      if (error) {
+        return reply.status(500).send({ success: false, message: "Error deleting staging products", error: error.message });
+      }
+
+      return reply.send({ success: true, message: "Productos eliminados del staging" });
+    } catch (error: any) {
+      return reply.status(500).send({ success: false, message: "Internal server error during delete", error: error.message });
+    }
+  });
+
+  // PUT /channels/:channelId/staging-products/:id/skip - Mark staged product as skipped
+  app.put("/channels/:channelId/staging-products/:id/skip", async (req: FastifyRequest<{ Params: { channelId: string; id: string } }>, reply: FastifyReply) => {
+    try {
+      const { channelId, id } = req.params;
+
+      const { error } = await supabase
+        .from("channel_products_staging")
+        .update({ import_status: "skipped", updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("channel_id", channelId);
+
+      if (error) {
+        return reply.status(500).send({ success: false, message: "Error marking staging product as skipped", error: error.message });
+      }
+
+      return reply.send({ success: true, message: "Producto marcado como omitido" });
+    } catch (error: any) {
+      return reply.status(500).send({ success: false, message: "Internal server error", error: error.message });
     }
   });
 
