@@ -85,30 +85,10 @@ export async function productRoutes(app: FastifyInstance) {
             });
           }
 
-          // Query 4: channel_types
-          const typeIds = [...new Set((chData || []).map((c: any) => c.channel_type_id).filter(Boolean))];
-          const { data: ctData, error: err4 } = await supabase
-            .from('channel_types')
-            .select('id, slug')
-            .in('id', typeIds);
-
-          if (err4) {
-            request.log.error(err4);
-            return reply.status(500).send({
-              success: false,
-              message: 'Error fetching channel types',
-              error: err4.message
-            });
-          }
-
-          // Map types
-          const typesMap: Record<string, string> = {};
-          (ctData || []).forEach((t: any) => { typesMap[t.id] = t.slug; });
-
-          // Map channels
+          // Map channels (use channel_type_id as type for now)
           const channelsMap: Record<string, any> = {};
           (chData || []).forEach((c: any) => {
-            channelsMap[c.id] = { name: c.name, type: typesMap[c.channel_type_id] || 'unknown' };
+            channelsMap[c.id] = { name: c.name, type: c.channel_type_id || 'unknown' };
           });
 
           // Map channel_products by product
