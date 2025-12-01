@@ -52,44 +52,52 @@ export async function channelsRoutes(app: FastifyInstance) {
   });
 
   // GET /channels - List channels for account
-  app.get("/channels", async (req: FastifyRequest<{ Querystring: { account_id: string } }>, reply: FastifyReply) => {
-    try {
-      const user = getUserFromRequest(req);
-      const { account_id } = req.query;
+  app.get('/channels', async (request, reply) => {
+    const { account_id } = request.query as any;
 
-      if (!account_id) {
-        return reply.status(400).send({
-          success: false,
-          error: "account_id is required"
-        });
-      }
-
-      // Validate account belongs to user
-      await validateAccountAccess(user, account_id);
-
-      const { data, error } = await supabase
-        .from("channels")
-        .select("*")
-        .eq("account_id", account_id)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        return reply.status(400).send({ success: false, error: error.message });
-      }
-
-      // Transform response to use channel_type_id
-      const channels = (data || []).map(channel => {
-        const { type, ...rest } = channel;
-        return {
-          ...rest,
-          channel_type_id: type
-        };
+    if (!account_id) {
+      return reply.status(400).send({
+        success: false,
+        message: 'account_id is required'
       });
-
-      return reply.send({ success: true, channels });
-    } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
     }
+
+    const { data, error } = await supabase
+      .from('channels')
+      .select(`
+        id,
+        account_id,
+        name,
+        status,
+        channel_type_id,
+        channel_types(name)
+      `)
+      .eq('account_id', account_id)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      request.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        message: 'Error fetching channels',
+        error: error.message
+      });
+    }
+
+    const channels = (data ?? []).map(c => ({
+      id: c.id,
+      account_id: c.account_id,
+      name: c.name,
+      status: c.status,
+      channel_type_id: c.channel_type_id,
+      channel_type_name: c.channel_types?.[0]?.name ?? null
+    }));
+
+    return reply.send({
+      success: true,
+      channels,
+      total: channels.length
+    });
   });
 
   // POST /channels - Create new channel
