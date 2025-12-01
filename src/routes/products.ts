@@ -53,8 +53,7 @@ export async function productRoutes(app: FastifyInstance) {
               channel_type_id,
               channel_types (
                 id,
-                name,
-                slug
+                name
               )
             )
           `)
@@ -81,7 +80,6 @@ export async function productRoutes(app: FastifyInstance) {
           const channelType =
             channelInfo.channel_type_id ||
             channelInfo.type ||
-            channelTypeDetails?.slug ||
             channelTypeDetails?.id ||
             channelTypeDetails?.name ||
             null;
