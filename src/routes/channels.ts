@@ -171,10 +171,11 @@ export async function channelsRoutes(app: FastifyInstance) {
       // Fetch all products with pagination
       const allSiigoProducts: any[] = [];
       const pageSize = 100;
-      let page = 0;
-      let hasMore = true;
+      let page = 1; // Siigo pages are 1-based
+      let totalResults = 0;
+      let pageCountGuard = 0;
 
-      while (hasMore) {
+      do {
         const productsResponse = await fetch(`${siigoBaseUrl}/v1/products?page=${page}&page_size=${pageSize}`, {
           method: "GET",
           headers: {
@@ -206,16 +207,15 @@ export async function channelsRoutes(app: FastifyInstance) {
 
         const productsData = await productsResponse.json();
         const results = productsData.results || [];
+        totalResults = productsData.pagination?.total_results || totalResults;
 
         if (results.length > 0) {
           allSiigoProducts.push(...results);
-          const totalResults = productsData.pagination?.total_results || 0;
-          hasMore = allSiigoProducts.length < totalResults;
-          page++;
-        } else {
-          hasMore = false;
         }
-      }
+
+        page += 1;
+        pageCountGuard += 1;
+      } while (allSiigoProducts.length < totalResults && totalResults > 0 && pageCountGuard < 60);
 
       // Track existing staging entries to detect new vs updated
       const { data: existingStaging } = await supabase
@@ -238,11 +238,11 @@ export async function channelsRoutes(app: FastifyInstance) {
           const currency = sp?.prices?.[0]?.price_list?.[0]?.currency_code || "COP";
           const status = sp?.active ? "active" : "inactive";
 
-          const payload = {
-            account_id: channel.account_id,
-            channel_id: channel.id,
-            external_id: sp.id,
-            external_sku: sp.code,
+      const payload = {
+        account_id: channel.account_id,
+        channel_id: channel.id,
+        external_id: sp.id,
+        external_sku: sp.code,
             name: sp.name,
             description: sp.description || "",
             price,
