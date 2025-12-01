@@ -17,115 +17,128 @@ export async function productRoutes(app: FastifyInstance) {
       }
 
       const pageNum = parseInt(page) || 0;
-      const limitNum = Math.min(parseInt(limit) || 50, 100); // Max 100
+      const limitNum = Math.min(parseInt(limit) || 50, 100);
       const offset = pageNum * limitNum;
 
-      // Build base query for products
-      let productsQuery = supabase
+      // QUERY 1: Products (simple, no JOINs)
+      let query = supabase
         .from('products')
         .select('*', { count: 'exact' })
-        .eq('account_id', account_id);
-
-      // Add search filter
-      if (search) {
-        productsQuery = productsQuery.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
-      }
-
-      // Add status filter
-      if (status && status !== 'all') {
-        productsQuery = productsQuery.eq('status', status);
-      }
-
-      // Add pagination and ordering
-      productsQuery = productsQuery
+        .eq('account_id', account_id)
         .order('created_at', { ascending: false })
         .range(offset, offset + limitNum - 1);
 
-      // Execute products query
-      const { data: productsData, error: productsError, count } = await productsQuery;
+      if (search) {
+        query = query.or(`name.ilike.%${search}%,sku.ilike.%${search}%`);
+      }
+      if (status && status !== 'all') {
+        query = query.eq('status', status);
+      }
 
-      if (productsError) {
-        request.log.error(productsError);
+      const { data: products, count, error: err1 } = await query;
+      if (err1) {
+        request.log.error(err1);
         return reply.status(500).send({
           success: false,
           message: 'Error fetching products',
-          error: productsError.message
+          error: err1.message
         });
       }
 
-      let products = productsData || [];
+      let result = products || [];
+      const total = count || 0;
 
-      // Fetch channels only if requested and there are products
-      if (include_channels === 'true' && products.length > 0) {
-        const productIds = products.map((p) => p.id);
+      // QUERIES 2, 3, 4: Channels (only if requested and there are products)
+      if (include_channels === 'true' && result.length > 0) {
+        const productIds = result.map((p: any) => p.id);
 
-        const { data: channelLinks, error: channelError } = await supabase
+        // Query 2: channel_products
+        const { data: cpData, error: err2 } = await supabase
           .from('channel_products')
-          .select(`
-            product_id,
-            channel_id,
-            external_id,
-            external_sku,
-            synced_at,
-            sync_status,
-            status,
-            last_sync_at,
-            channels (
-              name,
-              channel_types (
-                slug
-              )
-            )
-          `)
+          .select('product_id, channel_id, external_id, external_sku, synced_at, sync_status')
           .in('product_id', productIds);
 
-        if (channelError) {
-          request.log.error(channelError);
+        if (err2) {
+          request.log.error(err2);
           return reply.status(500).send({
             success: false,
-            message: 'Error fetching channels for products',
-            error: channelError.message
+            message: 'Error fetching channel products',
+            error: err2.message
           });
         }
 
-        const channelsByProduct = new Map<string, any[]>();
+        if (cpData && cpData.length > 0) {
+          const channelIds = [...new Set(cpData.map((cp: any) => cp.channel_id))];
 
-        for (const link of channelLinks || []) {
-          const channelInfo: any = (link as any).channels || {};
-          const channelTypeDetails = channelInfo.channel_types;
+          // Query 3: channels
+          const { data: chData, error: err3 } = await supabase
+            .from('channels')
+            .select('id, name, channel_type_id')
+            .in('id', channelIds);
 
-          const channelType = channelTypeDetails?.slug || null;
+          if (err3) {
+            request.log.error(err3);
+            return reply.status(500).send({
+              success: false,
+              message: 'Error fetching channels',
+              error: err3.message
+            });
+          }
 
-          const existing = channelsByProduct.get(link.product_id) || [];
-          existing.push({
-            channel_id: link.channel_id,
-            channel_name: channelInfo.name ?? null,
-            channel_type: channelType,
-            external_id: link.external_id,
-            external_sku: link.external_sku,
-            synced_at: (link as any).synced_at || (link as any).last_sync_at || null,
-            sync_status: (link as any).sync_status || (link as any).status || null
+          // Query 4: channel_types
+          const typeIds = [...new Set((chData || []).map((c: any) => c.channel_type_id).filter(Boolean))];
+          const { data: ctData, error: err4 } = await supabase
+            .from('channel_types')
+            .select('id, slug')
+            .in('id', typeIds);
+
+          if (err4) {
+            request.log.error(err4);
+            return reply.status(500).send({
+              success: false,
+              message: 'Error fetching channel types',
+              error: err4.message
+            });
+          }
+
+          // Map types
+          const typesMap: Record<string, string> = {};
+          (ctData || []).forEach((t: any) => { typesMap[t.id] = t.slug; });
+
+          // Map channels
+          const channelsMap: Record<string, any> = {};
+          (chData || []).forEach((c: any) => {
+            channelsMap[c.id] = { name: c.name, type: typesMap[c.channel_type_id] || 'unknown' };
           });
-          channelsByProduct.set(link.product_id, existing);
-        }
 
-        products = products.map(product => ({
-          ...product,
-          channels: channelsByProduct.get(product.id) || []
-        }));
+          // Map channel_products by product
+          const cpByProduct: Record<string, any[]> = {};
+          cpData.forEach((cp: any) => {
+            if (!cpByProduct[cp.product_id]) cpByProduct[cp.product_id] = [];
+            const ch = channelsMap[cp.channel_id] || {};
+            cpByProduct[cp.product_id].push({
+              channel_id: cp.channel_id,
+              channel_name: ch.name || 'Unknown',
+              channel_type: ch.type || 'unknown',
+              external_id: cp.external_id,
+              external_sku: cp.external_sku,
+              synced_at: cp.synced_at,
+              sync_status: cp.sync_status
+            });
+          });
+
+          // Add channels to products
+          result = result.map((p: any) => ({ ...p, channels: cpByProduct[p.id] || [] }));
+        } else {
+          result = result.map((p: any) => ({ ...p, channels: [] }));
+        }
       } else {
-        // Add empty channels array for consistency
-        products = products.map(product => ({
-          ...product,
-          channels: []
-        }));
+        result = result.map((p: any) => ({ ...p, channels: [] }));
       }
-
-      const total = count || 0;
 
       return reply.send({
         success: true,
-        products,
+        products: result,
         total,
         pagination: {
           page: pageNum,
