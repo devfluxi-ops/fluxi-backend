@@ -26,11 +26,8 @@ export interface Channel {
 interface ChannelInput {
   name?: string;
   description?: string;
-  type: ChannelType;
-  external_id: string;
-  access_token?: string;
-  refresh_token?: string;
-  token_expires_at?: string;
+  channel_type_id?: ChannelType;
+  external_id?: string;
   config?: Record<string, any>;
 }
 
@@ -80,23 +77,32 @@ export async function channelsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ success: false, error: error.message });
       }
 
-      return reply.send({ success: true, channels: data || [] });
+      // Transform response to use channel_type_id
+      const channels = (data || []).map(channel => {
+        const { type, ...rest } = channel;
+        return {
+          ...rest,
+          channel_type_id: type
+        };
+      });
+
+      return reply.send({ success: true, channels });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
     }
   });
 
   // POST /channels - Create new channel
-  app.post("/channels", async (req: FastifyRequest<{ Body: ChannelInput & { account_id: string } }>, reply: FastifyReply) => {
+  app.post("/channels", async (req: FastifyRequest<{ Body: ChannelInput & { account_id: string; channel_type_id: string } }>, reply: FastifyReply) => {
     try {
       getUserFromRequest(req);
 
-      const { account_id, name, description, type, external_id, config } = req.body;
+      const { account_id, name, description, channel_type_id, external_id, config } = req.body;
 
-      if (!account_id || !type) {
+      if (!account_id || !channel_type_id) {
         return reply.status(400).send({
           success: false,
-          error: "account_id and type are required"
+          error: "account_id and channel_type_id are required"
         });
       }
 
@@ -115,10 +121,10 @@ export async function channelsRoutes(app: FastifyInstance) {
       }
 
       const validTypes: ChannelType[] = ['shopify', 'siigo', 'erp', 'woocommerce', 'prestashop'];
-      if (!validTypes.includes(type)) {
+      if (!validTypes.includes(channel_type_id as ChannelType)) {
         return reply.status(400).send({
           success: false,
-          error: `Invalid type. Must be one of: ${validTypes.join(', ')}`
+          error: `Invalid channel_type_id. Must be one of: ${validTypes.join(', ')}`
         });
       }
 
@@ -126,7 +132,7 @@ export async function channelsRoutes(app: FastifyInstance) {
       let processedConfig = config || {};
       let hasCredentials = false;
 
-      if (type === 'siigo') {
+      if (channel_type_id === 'siigo') {
         // For Siigo, validate username, api_key, and partner_id in config
         const username = config?.username || config?.email;
         const apiKey = config?.api_key;
@@ -147,7 +153,7 @@ export async function channelsRoutes(app: FastifyInstance) {
           configured_at: new Date().toISOString()
         };
         hasCredentials = true;
-      } else if (type === 'shopify') {
+      } else if (channel_type_id === 'shopify') {
         // For Shopify, validate store_url and access_token
         if (config?.store_url && config?.access_token) {
           processedConfig = {
@@ -167,7 +173,7 @@ export async function channelsRoutes(app: FastifyInstance) {
           account_id,
           name,
           description,
-          type,
+          type: channel_type_id,
           external_id,
           config: processedConfig,
           status: hasCredentials ? 'connected' : 'disconnected'
@@ -179,7 +185,14 @@ export async function channelsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ success: false, error: error.message });
       }
 
-      return reply.send({ success: true, channel: data });
+      // Return with channel_type_id for API consistency
+      const channelResponse = {
+        ...data,
+        channel_type_id: data.type
+      };
+      delete channelResponse.type;
+
+      return reply.send({ success: true, channel: channelResponse });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
     }
@@ -193,13 +206,13 @@ export async function channelsRoutes(app: FastifyInstance) {
       const { id } = req.params;
       const updates = req.body;
 
-      // Validate type if provided
-      if (updates.type) {
+      // Validate channel_type_id if provided
+      if (updates.channel_type_id) {
         const validTypes: ChannelType[] = ['shopify', 'siigo', 'erp', 'woocommerce', 'prestashop'];
-        if (!validTypes.includes(updates.type)) {
+        if (!validTypes.includes(updates.channel_type_id)) {
           return reply.status(400).send({
             success: false,
-            error: `Invalid type. Must be one of: ${validTypes.join(', ')}`
+            error: `Invalid channel_type_id. Must be one of: ${validTypes.join(', ')}`
           });
         }
       }
@@ -234,7 +247,14 @@ export async function channelsRoutes(app: FastifyInstance) {
         return reply.status(400).send({ success: false, error: error.message });
       }
 
-      return reply.send({ success: true, channel: data });
+      // Return with channel_type_id for API consistency
+      const channelResponse = {
+        ...data,
+        channel_type_id: data.type
+      };
+      delete channelResponse.type;
+
+      return reply.send({ success: true, channel: channelResponse });
     } catch (error: any) {
       return reply.status(401).send({ success: false, error: error.message });
     }
