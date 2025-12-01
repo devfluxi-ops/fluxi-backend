@@ -152,8 +152,8 @@ export async function productRoutes(app: FastifyInstance) {
 
       // Create inventory stock if stock > 0
       if (stock > 0) {
-        // Get default inventory for the account
-        const { data: defaultInventory, error: inventoryError } = await supabase
+        // Get or create default inventory for the account
+        let { data: defaultInventory, error: inventoryError } = await supabase
           .from("inventories")
           .select("id")
           .eq("account_id", account_id)
@@ -161,7 +161,22 @@ export async function productRoutes(app: FastifyInstance) {
           .single();
 
         if (inventoryError || !defaultInventory) {
-          return sendError(reply, "No default inventory found for this account", 400);
+          // Create default inventory
+          const { data: newInventory, error: createError } = await supabase
+            .from("inventories")
+            .insert({
+              account_id,
+              name: "Inventario Principal",
+              is_default: true
+            })
+            .select("id")
+            .single();
+
+          if (createError) {
+            return sendError(reply, `Failed to create default inventory: ${createError.message}`, 400);
+          }
+
+          defaultInventory = newInventory;
         }
 
         const { error: stockError } = await supabase
@@ -270,8 +285,8 @@ export async function productRoutes(app: FastifyInstance) {
           .single();
 
         if (variant) {
-          // Get default inventory for the account
-          const { data: defaultInventory, error: inventoryError } = await supabase
+          // Get or create default inventory for the account
+          let { data: defaultInventory, error: inventoryError } = await supabase
             .from("inventories")
             .select("id")
             .eq("account_id", currentProduct.account_id)
@@ -279,7 +294,22 @@ export async function productRoutes(app: FastifyInstance) {
             .single();
 
           if (inventoryError || !defaultInventory) {
-            return sendError(reply, "No default inventory found for this account", 400);
+            // Create default inventory
+            const { data: newInventory, error: createError } = await supabase
+              .from("inventories")
+              .insert({
+                account_id: currentProduct.account_id,
+                name: "Inventario Principal",
+                is_default: true
+              })
+              .select("id")
+              .single();
+
+            if (createError) {
+              return sendError(reply, `Failed to create default inventory: ${createError.message}`, 400);
+            }
+
+            defaultInventory = newInventory;
           }
 
           const { error: stockError } = await supabase
