@@ -481,6 +481,227 @@ export async function channelsRoutes(app: FastifyInstance) {
       return reply.status(401).send({ success: false, error: error.message });
     }
   });
+
+  // GET /channels/:id/products - List products from a specific channel
+  app.get("/channels/:id/products", async (req: FastifyRequest<{ Params: { id: string }, Querystring: { limit?: number; offset?: number } }>, reply: FastifyReply) => {
+    try {
+      getUserFromRequest(req);
+
+      const { id } = req.params;
+      const { limit = 50, offset = 0 } = req.query;
+
+      // Get channel details
+      const { data: channel, error: channelError } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (channelError || !channel) {
+        return reply.status(404).send({ success: false, error: "Channel not found" });
+      }
+
+      let products: any[] = [];
+
+      if (channel.channel_type_id === 'siigo') {
+        // Fetch real products from Siigo API
+        const { username, api_key } = channel.config;
+
+        if (!username || !api_key) {
+          return reply.status(400).send({ success: false, error: "Siigo credentials not configured" });
+        }
+
+        const SIIGO_BASE_URL = process.env.SIIGO_API_BASE_URL || "https://api.siigo.com";
+        const SIIGO_PARTNER_ID = process.env.SIIGO_PARTNER_ID || "fluxiBackend";
+
+        // Authenticate with Siigo
+        const authResponse = await fetch(`${SIIGO_BASE_URL}/auth`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Partner-Id': SIIGO_PARTNER_ID,
+          },
+          body: JSON.stringify({
+            username: username,
+            access_key: api_key
+          })
+        });
+
+        if (!authResponse.ok) {
+          const errorText = await authResponse.text();
+          return reply.status(400).send({
+            success: false,
+            error: `Siigo authentication failed: ${authResponse.status} ${errorText}`
+          });
+        }
+
+        const authData = await authResponse.json();
+        const accessToken = authData.access_token;
+
+        if (!accessToken) {
+          return reply.status(400).send({ success: false, error: "No access token received from Siigo" });
+        }
+
+        // Fetch products from Siigo
+        const productsResponse = await fetch(`${SIIGO_BASE_URL}/v1/products?page_size=${limit}`, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Partner-Id': SIIGO_PARTNER_ID,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (!productsResponse.ok) {
+          const errorText = await productsResponse.text();
+          return reply.status(400).send({
+            success: false,
+            error: `Siigo products API failed: ${productsResponse.status} ${errorText}`
+          });
+        }
+
+        const siigoData = await productsResponse.json();
+
+        // Normalize Siigo products to frontend format
+        products = siigoData.results?.map((p: any) => ({
+          id: p.id,
+          external_id: p.id,
+          name: p.name,
+          sku: p.code,
+          description: p.description || '',
+          price: p.prices?.[0]?.price_list?.[0]?.value || 0,
+          currency: p.prices?.[0]?.currency_code || 'COP',
+          stock: p.available_quantity || 0,
+          status: p.active ? 'active' : 'inactive',
+          source: 'siigo',
+          warehouses: p.warehouses || []
+        })) || [];
+
+        return reply.send({
+          success: true,
+          products,
+          total: siigoData.pagination?.total_results || products.length,
+          page: siigoData.pagination?.page || 1,
+          limit
+        });
+
+      } else if (channel.channel_type_id === 'shopify') {
+        // Mock Shopify products (for now)
+        products = [
+          {
+            id: "shopify-001",
+            name: "Producto Shopify 1",
+            sku: "SHOP001",
+            price: 15000,
+            description: "Producto de Shopify",
+            external_id: "shopify-001"
+          }
+        ];
+      } else {
+        return reply.status(400).send({
+          success: false,
+          error: `Product fetching not implemented for channel type: ${channel.channel_type_id}`
+        });
+      }
+
+      return reply.send({
+        success: true,
+        products,
+        total: products.length,
+        limit,
+        offset
+      });
+    } catch (error: any) {
+      console.error('Error fetching channel products:', error);
+      return reply.status(500).send({ success: false, error: error.message });
+    }
+  });
+
+  // POST /channels/:id/import-products - Import products from channel to catalog
+  app.post("/channels/:id/import-products", async (req: FastifyRequest<{ Params: { id: string }, Body: { product_ids: string[] } }>, reply: FastifyReply) => {
+    try {
+      getUserFromRequest(req);
+
+      const { id } = req.params;
+      const { product_ids } = req.body;
+
+      if (!product_ids || !Array.isArray(product_ids)) {
+        return reply.status(400).send({
+          success: false,
+          error: "product_ids array is required"
+        });
+      }
+
+      // Get channel details
+      const { data: channel, error: channelError } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (channelError || !channel) {
+        return reply.status(404).send({ success: false, error: "Channel not found" });
+      }
+
+      // Mock import process
+      const importedProducts = product_ids.map(productId => ({
+        id: `imported-${productId}`,
+        channel_id: id,
+        external_product_id: productId,
+        status: "imported"
+      }));
+
+      return reply.send({
+        success: true,
+        message: `Imported ${product_ids.length} products`,
+        imported_products: importedProducts
+      });
+    } catch (error: any) {
+      return reply.status(401).send({ success: false, error: error.message });
+    }
+  });
+
+  // POST /channels/share-products - Share products between channels
+  app.post("/channels/share-products", async (req: FastifyRequest<{ Body: { product_ids: string[]; target_channel_ids: string[] } }>, reply: FastifyReply) => {
+    try {
+      getUserFromRequest(req);
+
+      const { product_ids, target_channel_ids } = req.body;
+
+      if (!product_ids || !Array.isArray(product_ids)) {
+        return reply.status(400).send({
+          success: false,
+          error: "product_ids array is required"
+        });
+      }
+
+      if (!target_channel_ids || !Array.isArray(target_channel_ids)) {
+        return reply.status(400).send({
+          success: false,
+          error: "target_channel_ids array is required"
+        });
+      }
+
+      // Mock sharing process
+      const sharedProducts = [];
+      for (const productId of product_ids) {
+        for (const targetChannelId of target_channel_ids) {
+          sharedProducts.push({
+            product_id: productId,
+            target_channel_id: targetChannelId,
+            status: "shared"
+          });
+        }
+      }
+
+      return reply.send({
+        success: true,
+        message: `Shared ${product_ids.length} products to ${target_channel_ids.length} channels`,
+        shared_products: sharedProducts
+      });
+    } catch (error: any) {
+      return reply.status(401).send({ success: false, error: error.message });
+    }
+  });
 }
 
 // Helper functions for testing connections
