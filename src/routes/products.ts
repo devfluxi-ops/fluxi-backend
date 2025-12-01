@@ -16,45 +16,96 @@ export async function productRoutes(app: FastifyInstance) {
         });
       }
 
-      let products: any[] = [];
+      // Always fetch products first
+      const { data: productsData, error: productsError } = await supabase
+        .from('products')
+        .select('*')
+        .eq('account_id', account_id)
+        .order('created_at', { ascending: false });
 
-      if (include_channels === 'true') {
-        // Use the view that includes channels
-        const { data, error } = await supabase
-          .from('view_products_with_channels')
-          .select('*')
-          .eq('account_id', account_id)
-          .order('name', { ascending: true });
+      if (productsError) {
+        request.log.error(productsError);
+        return reply.status(500).send({
+          success: false,
+          message: 'Error fetching products',
+          error: productsError.message
+        });
+      }
 
-        if (error) {
-          request.log.error(error);
+      let products = productsData || [];
+
+      if (include_channels === 'true' && products.length > 0) {
+        const productIds = products.map((p) => p.id);
+
+        const { data: channelLinks, error: channelError } = await supabase
+          .from('channel_products')
+          .select(`
+            product_id,
+            channel_id,
+            external_id,
+            external_sku,
+            synced_at,
+            sync_status,
+            status,
+            last_sync_at,
+            channels (
+              name,
+              channel_type_id,
+              channel_types (
+                id,
+                name,
+                slug
+              )
+            )
+          `)
+          .in('product_id', productIds);
+
+        if (channelError) {
+          request.log.error(channelError);
           return reply.status(500).send({
             success: false,
-            message: 'Error fetching products with channels',
-            error: error.message
+            message: 'Error fetching channels for products',
+            error: channelError.message
           });
         }
 
-        products = data || [];
+        const channelsByProduct = new Map<string, any[]>();
+
+        for (const link of channelLinks || []) {
+          const channelInfo: any = (link as any).channels || {};
+          const channelTypeRelation = channelInfo.channel_types;
+          const channelTypeDetails = Array.isArray(channelTypeRelation)
+            ? channelTypeRelation[0]
+            : channelTypeRelation;
+
+          const channelType =
+            channelInfo.channel_type_id ||
+            channelInfo.type ||
+            channelTypeDetails?.slug ||
+            channelTypeDetails?.id ||
+            channelTypeDetails?.name ||
+            null;
+
+          const existing = channelsByProduct.get(link.product_id) || [];
+          existing.push({
+            channel_id: link.channel_id,
+            channel_name: channelInfo.name ?? null,
+            channel_type: channelType,
+            external_id: link.external_id,
+            external_sku: link.external_sku,
+            synced_at: (link as any).synced_at || (link as any).last_sync_at || null,
+            sync_status: (link as any).sync_status || (link as any).status || null
+          });
+          channelsByProduct.set(link.product_id, existing);
+        }
+
+        products = products.map(product => ({
+          ...product,
+          channels: channelsByProduct.get(product.id) || []
+        }));
       } else {
-        // Use products table directly
-        const { data, error } = await supabase
-          .from('products')
-          .select('*')
-          .eq('account_id', account_id)
-          .order('name', { ascending: true });
-
-        if (error) {
-          request.log.error(error);
-          return reply.status(500).send({
-            success: false,
-            message: 'Error fetching products',
-            error: error.message
-          });
-        }
-
         // Add empty channels array for consistency
-        products = (data || []).map(product => ({
+        products = products.map(product => ({
           ...product,
           channels: []
         }));

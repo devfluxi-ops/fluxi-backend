@@ -100,6 +100,256 @@ export async function channelsRoutes(app: FastifyInstance) {
     });
   });
 
+  // POST /channels/:channelId/sync - Sync products from Siigo with pagination
+  app.post("/channels/:channelId/sync", async (req: FastifyRequest<{ Params: { channelId: string }, Body: { account_id?: string } }>, reply: FastifyReply) => {
+    try {
+      const { channelId } = req.params;
+      const { account_id } = req.body || {};
+
+      // Get channel details
+      const { data: channel, error: channelError } = await supabase
+        .from("channels")
+        .select("id, account_id, name, channel_type_id, config")
+        .eq("id", channelId)
+        .single();
+
+      if (channelError || !channel) {
+        return reply.status(404).send({
+          success: false,
+          message: "Channel not found"
+        });
+      }
+
+      if (account_id && channel.account_id !== account_id) {
+        return reply.status(400).send({
+          success: false,
+          message: "Channel does not belong to the provided account_id"
+        });
+      }
+
+      if (channel.channel_type_id !== "siigo") {
+        return reply.status(400).send({
+          success: false,
+          message: "Only Siigo channels are supported for sync"
+        });
+      }
+
+      const { username, api_key, partner_id } = channel.config || {};
+      const siigoPartnerId = partner_id || process.env.SIIGO_PARTNER_ID || "fluxiBackend";
+      const siigoBaseUrl = process.env.SIIGO_API_BASE_URL || "https://api.siigo.com";
+
+      if (!username || !api_key) {
+        return reply.status(400).send({
+          success: false,
+          message: "Siigo credentials not configured"
+        });
+      }
+
+      // Authenticate with Siigo
+      const authResponse = await fetch(`${siigoBaseUrl}/auth`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Partner-Id": siigoPartnerId
+        },
+        body: JSON.stringify({
+          username,
+          access_key: api_key
+        })
+      });
+
+      if (!authResponse.ok) {
+        const errorText = await authResponse.text();
+
+        await supabase
+          .from("channels")
+          .update({
+            status: "error",
+            last_error: `Authentication failed: ${authResponse.status} ${errorText}`,
+            updated_at: new Date().toISOString()
+          })
+          .eq("id", channelId);
+
+        await supabase
+          .from("sync_logs")
+          .insert([{
+            account_id: channel.account_id,
+            channel_id: channelId,
+            event_type: "channel_product_sync",
+            status: "error",
+            payload: { error: "authentication_failed" }
+          }]);
+
+        return reply.status(502).send({
+          success: false,
+          message: "Failed to authenticate with Siigo"
+        });
+      }
+
+      const { access_token } = await authResponse.json();
+
+      if (!access_token) {
+        return reply.status(502).send({
+          success: false,
+          message: "No access token received from Siigo"
+        });
+      }
+
+      // Fetch all products from Siigo with pagination
+      const allSiigoProducts: any[] = [];
+      const pageSize = 100;
+      let page = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const productsResponse = await fetch(`${siigoBaseUrl}/v1/products?page=${page}&page_size=${pageSize}`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${access_token}`,
+            "Content-Type": "application/json",
+            "Partner-Id": siigoPartnerId
+          }
+        });
+
+        if (!productsResponse.ok) {
+          const errorText = await productsResponse.text();
+
+          await supabase
+            .from("channels")
+            .update({
+              status: "error",
+              last_error: `Products fetch failed: ${productsResponse.status} ${errorText}`,
+              updated_at: new Date().toISOString()
+            })
+            .eq("id", channelId);
+
+          await supabase
+            .from("sync_logs")
+            .insert([{
+              account_id: channel.account_id,
+              channel_id: channelId,
+              event_type: "channel_product_sync",
+              status: "error",
+              payload: { error: "products_fetch_failed" }
+            }]);
+
+          return reply.status(502).send({
+            success: false,
+            message: "Failed to fetch products from Siigo"
+          });
+        }
+
+        const productsData = await productsResponse.json();
+        const results = productsData.results || [];
+
+        if (results.length > 0) {
+          allSiigoProducts.push(...results);
+
+          const totalResults = productsData.pagination?.total_results || 0;
+          hasMore = allSiigoProducts.length < totalResults;
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      let syncedCount = 0;
+      const errors: { sku?: string; error: string }[] = [];
+
+      for (const sp of allSiigoProducts) {
+        try {
+          const price = sp?.prices?.[0]?.price_list?.[0]?.value != null
+            ? Number(sp.prices[0].price_list[0].value)
+            : 0;
+
+          const currency = sp?.prices?.[0]?.price_list?.[0]?.currency_code || "COP";
+          const status = sp?.active ? "active" : "inactive";
+
+          const { data: product, error: upsertError } = await supabase
+            .from("products")
+            .upsert({
+              account_id: channel.account_id,
+              sku: sp.code,
+              name: sp.name,
+              price,
+              description: sp.description || "",
+              currency,
+              status
+            }, { onConflict: "account_id,sku" })
+            .select("id")
+            .single();
+
+          if (upsertError || !product) {
+            throw new Error(upsertError?.message || "Failed to upsert product");
+          }
+
+          const { error: linkError } = await supabase
+            .from("channel_products")
+            .upsert({
+              product_id: product.id,
+              channel_id: channel.id,
+              external_id: sp.id,
+              external_sku: sp.code,
+              synced_at: new Date().toISOString(),
+              sync_status: "synced",
+              last_error: null
+            }, { onConflict: "product_id,channel_id" });
+
+          if (linkError) {
+            throw new Error(linkError.message);
+          }
+
+          syncedCount++;
+        } catch (productError: any) {
+          errors.push({
+            sku: sp?.code,
+            error: productError.message
+          });
+        }
+      }
+
+      await supabase
+        .from("channels")
+        .update({
+          status: errors.length ? "error" : "connected",
+          last_error: errors.length ? errors[0].error : null,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", channelId);
+
+      await supabase
+        .from("sync_logs")
+        .insert([{
+          account_id: channel.account_id,
+          channel_id: channelId,
+          event_type: "channel_product_sync",
+          status: errors.length ? "warning" : "completed",
+          records_processed: syncedCount,
+          payload: {
+            source: "siigo",
+            synced_count: syncedCount,
+            total_from_siigo: allSiigoProducts.length,
+            errors: errors.slice(0, 10)
+          }
+        }]);
+
+      return reply.send({
+        success: true,
+        synced_count: syncedCount,
+        total_from_siigo: allSiigoProducts.length,
+        errors: errors.length ? errors.slice(0, 10) : undefined,
+        message: `${syncedCount} productos sincronizados desde Siigo`
+      });
+    } catch (error: any) {
+      console.error("Error syncing channel products:", error);
+      return reply.status(500).send({
+        success: false,
+        message: "Internal server error during sync",
+        error: error.message
+      });
+    }
+  });
+
   // POST /channels - Create new channel
   app.post("/channels", async (req: FastifyRequest<{ Body: ChannelInput & { account_id: string; channel_type_id: string } }>, reply: FastifyReply) => {
     try {
