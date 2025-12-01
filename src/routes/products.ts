@@ -83,6 +83,7 @@ export async function productRoutes(app: FastifyInstance) {
     name: string;
     description?: string;
     internal_sku: string;
+    price: number;
     attributes?: Record<string, any>;
     barcode?: string;
     weight?: number;
@@ -97,6 +98,7 @@ export async function productRoutes(app: FastifyInstance) {
         name,
         description,
         internal_sku,
+        price,
         attributes = {},
         barcode,
         weight,
@@ -108,8 +110,8 @@ export async function productRoutes(app: FastifyInstance) {
       // Validate account access
       await validateAccountAccess(user, account_id);
 
-      if (!name || !internal_sku) {
-        return sendError(reply, "name and internal_sku are required", 400);
+      if (!name || !internal_sku || price === undefined) {
+        return sendError(reply, "name, internal_sku, and price are required", 400);
       }
 
       // Create product
@@ -118,6 +120,8 @@ export async function productRoutes(app: FastifyInstance) {
         .insert({
           account_id,
           name,
+          sku: internal_sku,
+          price,
           description,
           status
         })
@@ -163,19 +167,9 @@ export async function productRoutes(app: FastifyInstance) {
 
       return sendSuccess(reply, {
         product: {
-          id: product.id,
-          account_id: product.account_id,
-          name: product.name,
-          description: product.description,
-          status: product.status,
-          variant: {
-            id: variant.id,
-            internal_sku: variant.internal_sku,
-            attributes: variant.attributes,
-            barcode: variant.barcode,
-            stock: stock
-          },
-          created_at: product.created_at
+          ...product,
+          variant: variant,
+          stock: stock
         }
       });
     } catch (error: any) {
