@@ -407,7 +407,7 @@ async function testSiigoConnection(channel: any) {
       authHeaders['Partner-Id'] = partnerId;
     }
 
-    const authUrl = `${baseUrl}/auth`;
+    const authUrl = `${baseUrl}/auth/token`;
     console.log('Siigo auth URL:', authUrl);
     console.log('Siigo auth headers:', JSON.stringify(authHeaders, null, 2));
     console.log('Siigo auth body:', JSON.stringify({ username, access_key: apiKey }, null, 2));
