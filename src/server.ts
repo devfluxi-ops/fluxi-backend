@@ -49,6 +49,49 @@ app.post("/admin/add-stock-column", async (req, reply) => {
   }
 });
 
+// Admin route to sync stock and price from staging
+app.post("/admin/sync-stock-price", async (req, reply) => {
+  try {
+    const { action } = req.body as { action: string };
+
+    if (action === 'update_stock_price') {
+      return reply.send({
+        success: true,
+        message: "Please run this SQL manually in Supabase dashboard:",
+        sql: `
+-- Sincronizar stock y precio desde staging a products
+UPDATE products p
+SET stock = cps.stock,
+    price = cps.price
+FROM channel_products_staging cps
+WHERE p.id = cps.imported_product_id
+  AND p.account_id = cps.account_id
+  AND cps.status = 'imported';
+        `.trim()
+      });
+
+    } else if (action === 'verify_sync') {
+      return reply.send({
+        success: true,
+        message: "Please run this SQL manually in Supabase dashboard:",
+        sql: `
+-- Verificar que el stock se actualizó
+SELECT p.name, p.sku, p.stock, p.price, cps.stock as staging_stock, cps.price as staging_price
+FROM products p
+JOIN channel_products_staging cps ON p.id = cps.imported_product_id AND p.account_id = cps.account_id
+WHERE p.account_id = '725bc8b2-25c0-40a3-b0cb-4315dce06097'
+LIMIT 10;
+        `.trim()
+      });
+    }
+
+    return reply.status(400).send({ success: false, error: "Invalid action" });
+
+  } catch (error: any) {
+    return reply.status(500).send({ success: false, error: error.message });
+  }
+});
+
 authRoutes(app);
 accountsRoutes(app);
 orderRoutes(app);

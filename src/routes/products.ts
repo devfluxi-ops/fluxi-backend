@@ -24,7 +24,7 @@ export async function productRoutes(app: FastifyInstance) {
       // QUERY 1: Products with stock and price (simple, no JOINs)
       let query = supabase
         .from('products')
-        .select('id, account_id, name, sku, description, price, currency, status, created_at, updated_at', { count: 'exact' })
+        .select('id, account_id, name, sku, description, price, stock, currency, status, created_at, updated_at', { count: 'exact' })
         .eq('account_id', account_id)
         .order('created_at', { ascending: false })
         .range(offset, offset + limitNum - 1);
