@@ -133,23 +133,25 @@ export async function channelsRoutes(app: FastifyInstance) {
       let hasCredentials = false;
 
       if (channel_type_id === 'siigo') {
-        // For Siigo, validate username, api_key, and partner_id in config
+        // For Siigo, validate username and api_key in config
         const username = config?.username || config?.email;
         const apiKey = config?.api_key;
-        const partnerId = config?.partner_id;
 
-        if (!username || !apiKey || !partnerId) {
+        if (!username || !apiKey) {
           return reply.status(400).send({
             success: false,
-            error: "Siigo channels require username, api_key, and partner_id in config"
+            error: "Siigo channels require username and api_key in config"
           });
         }
+
+        // Partner-Id is managed by backend from environment
+        const partnerId = process.env.SIIGO_PARTNER_ID || 'fluxiBackend';
 
         processedConfig = {
           ...config,
           username: username,
           api_key: apiKey,
-          partner_id: partnerId,
+          partner_id: partnerId, // Backend-managed
           configured_at: new Date().toISOString()
         };
         hasCredentials = true;
