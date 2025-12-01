@@ -26,23 +26,28 @@ app.get("/health", async () => {
 // Temporary admin route to add stock column
 app.post("/admin/add-stock-column", async (req, reply) => {
   try {
-    const { supabaseAdmin } = await import("./supabaseClient");
+    const { supabase } = await import("./supabaseClient");
 
-    // Try to execute raw SQL using admin client
-    // Note: This might not work, but let's try
-    const { data, error } = await supabaseAdmin
+    // Test if stock column exists by trying to select it
+    const { data, error } = await supabase
       .from('products')
-      .select('id')
-      .limit(1);
+      .select('id, stock')
+      .eq('account_id', '725bc8b2-25c0-40a3-b0cb-4315dce06097')
+      .limit(5);
 
     if (error) {
-      return reply.status(500).send({ success: false, error: error.message });
+      return reply.status(500).send({
+        success: false,
+        error: error.message,
+        message: "Stock column may not exist. Please run this SQL manually in Supabase dashboard:",
+        sql: "ALTER TABLE products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0;"
+      });
     }
 
     return reply.send({
       success: true,
-      message: "Database connection OK. Please run this SQL manually in Supabase dashboard:",
-      sql: "ALTER TABLE products ADD COLUMN IF NOT EXISTS stock INTEGER DEFAULT 0;"
+      message: "Stock column exists. Sample data:",
+      sample_data: data
     });
   } catch (error: any) {
     return reply.status(500).send({ success: false, error: error.message });
