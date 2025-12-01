@@ -43,7 +43,7 @@ export async function registerChannelsRoutes(app: FastifyInstance) {
         name: channel.name,
         status: channel.status,
         channel_type_id: channel.channel_type_id,
-        channel_type_name: channel.channel_types?.name || 'Unknown'
+        channel_type_name: channel.channel_types?.[0]?.name ?? "Unknown"
       }));
 
       return reply.send({
