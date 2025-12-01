@@ -4,52 +4,76 @@ import { getUserFromRequest, validateAccountAccess } from "../utils/auth";
 import { sendSuccess, sendError, sendNotFound } from "../utils/responses";
 
 export async function productRoutes(app: FastifyInstance) {
-  // GET /products - List products with variants and stock
-  app.get(
-    "/products",
-    async (
-      req: FastifyRequest<{ Querystring: { account_id: string; search?: string; status?: string; limit?: number } }>,
-      reply: FastifyReply,
-    ) => {
-      try {
-        const user = getUserFromRequest(req);
-        const { account_id, search, status, limit = 50 } = req.query;
+  // GET /products - List products for account
+  app.get('/products', async (request: FastifyRequest<{ Querystring: { account_id: string; include_channels?: string } }>, reply: FastifyReply) => {
+    try {
+      const { account_id, include_channels } = request.query;
 
-        if (!account_id) {
-          return sendError(reply, "account_id is required", 400);
-        }
+      if (!account_id) {
+        return reply.status(400).send({
+          success: false,
+          message: 'account_id is required'
+        });
+      }
 
-        // Validate account access
-        await validateAccountAccess(user, account_id);
+      let products: any[] = [];
 
-        // Use the product_catalog view for comprehensive data
-        let query = supabase
-          .from("product_catalog")
-          .select("*")
-          .eq("account_id", account_id);
-
-        if (search && search.trim() !== "") {
-          query = query.or(`name.ilike.%${search}%,internal_sku.ilike.%${search}%`);
-        }
-
-        if (status) {
-          query = query.eq("status", status);
-        }
-
-        const { data, error } = await query
-          .order("name")
-          .limit(limit);
+      if (include_channels === 'true') {
+        // Use the view that includes channels
+        const { data, error } = await supabase
+          .from('view_products_with_channels')
+          .select('*')
+          .eq('account_id', account_id)
+          .order('name', { ascending: true });
 
         if (error) {
-          return sendError(reply, error.message, 400);
+          request.log.error(error);
+          return reply.status(500).send({
+            success: false,
+            message: 'Error fetching products with channels',
+            error: error.message
+          });
         }
 
-        return sendSuccess(reply, { products: data || [] });
-      } catch (err: any) {
-        return sendError(reply, err.message, 401);
+        products = data || [];
+      } else {
+        // Use products table directly
+        const { data, error } = await supabase
+          .from('products')
+          .select('*')
+          .eq('account_id', account_id)
+          .order('name', { ascending: true });
+
+        if (error) {
+          request.log.error(error);
+          return reply.status(500).send({
+            success: false,
+            message: 'Error fetching products',
+            error: error.message
+          });
+        }
+
+        // Add empty channels array for consistency
+        products = (data || []).map(product => ({
+          ...product,
+          channels: []
+        }));
       }
-    },
-  );
+
+      return reply.send({
+        success: true,
+        products,
+        total: products.length
+      });
+    } catch (error: any) {
+      request.log.error(error);
+      return reply.status(500).send({
+        success: false,
+        message: 'Internal server error',
+        error: error.message
+      });
+    }
+  });
 
   // GET /products/:productId - Get single product with variants and stock
   app.get("/products/:productId", async (req: FastifyRequest<{ Params: { productId: string } }>, reply: FastifyReply) => {
