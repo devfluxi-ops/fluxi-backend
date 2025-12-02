@@ -16,14 +16,14 @@ type CallbackQuery = {
 };
 
 export async function registerShopifyAuthRoutes(app: FastifyInstance) {
-  const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
-  const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
-  const SHOPIFY_SCOPES = process.env.SHOPIFY_SCOPES;
-  const SHOPIFY_APP_URL = process.env.SHOPIFY_APP_URL;
+  const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY || 'test-key';
+  const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || 'test-secret';
+  const SHOPIFY_SCOPES = process.env.SHOPIFY_SCOPES || 'read_products';
+  const SHOPIFY_APP_URL = process.env.SHOPIFY_APP_URL || 'https://fluxi-backend.onrender.com';
 
-  if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET || !SHOPIFY_SCOPES || !SHOPIFY_APP_URL) {
-    app.log.warn("Shopify environment variables not configured - Shopify routes disabled");
-    return; // Skip registration if env vars are missing
+  if (!process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET || !process.env.SHOPIFY_SCOPES || !process.env.SHOPIFY_APP_URL) {
+    app.log.warn("Shopify environment variables not configured - using defaults for testing");
+    // Continue with defaults for testing, but routes will fail gracefully
   }
 
   // 🔹 1. Iniciar instalación: redirigir a Shopify OAuth
@@ -140,7 +140,19 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
 
   // 🔹 RUTA PARA EL FRONT EMBEBIDO EN SHOPIFY
   app.get('/app', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { shop } = request.query as { shop?: string };
+    const query = request.query as {
+      shop?: string;
+      embedded?: string;
+      hmac?: string;
+      host?: string;
+      id_token?: string;
+      locale?: string;
+      session?: string;
+      timestamp?: string;
+      [key: string]: any;
+    };
+
+    const { shop } = query;
 
     reply.type('text/html; charset=utf-8');
 

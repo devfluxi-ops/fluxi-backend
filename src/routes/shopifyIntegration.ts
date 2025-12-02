@@ -10,6 +10,11 @@ type SyncInventoryBody = {
 };
 
 export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
+  // Check if environment variables are configured
+  if (!process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET) {
+    app.log.warn("Shopify environment variables not configured - integration routes using defaults for testing");
+    // Continue with defaults for testing
+  }
   // POST /shopify/products/import
   app.post(
     "/shopify/products/import",
