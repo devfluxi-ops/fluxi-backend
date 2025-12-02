@@ -7,6 +7,13 @@ export interface ShopRecord {
   shop_domain: string;
   access_token: string;
   scope: string | null;
+
+  // Campos que YA EXISTEN en la tabla Supabase
+  installed_at?: string | null;
+  last_sync?: string | null;
+
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 /**
