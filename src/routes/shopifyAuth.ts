@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import crypto from "crypto";
-import { upsertShop } from "../services/shopifyService";
+import { upsertShop, getShopByDomain } from "../services/shopifyService";
 
 type InstallQuery = {
   shop: string;              // dominio .myshopify.com
@@ -125,9 +125,10 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
           scope,
         });
 
-        // ✅ Redirigir a la app embebida
-        const appUrl = `${SHOPIFY_APP_URL}/app?shop=${shop}${host ? `&host=${host}` : ''}`;
-        return reply.redirect(appUrl);
+        // ✅ Redirigir al panel principal de Fluxi (dashboard)
+        // El dashboard debe manejar la configuración del canal Shopify
+        const dashboardUrl = `https://app.fluxi.com/channels/shopify/setup?shop=${shop}&token=${accessToken}`;
+        return reply.redirect(dashboardUrl);
 
       } catch (error: any) {
         request.log.error(error, "Error en callback de Shopify");
@@ -203,6 +204,11 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
               border: 1px solid rgba(34, 197, 94, 0.3);
               margin-bottom: 10px;
             }
+            .badge.error {
+              background: rgba(239, 68, 68, 0.1);
+              color: #ef4444;
+              border: 1px solid rgba(239, 68, 68, 0.3);
+            }
             .actions {
               margin-top: 18px;
               display: flex;
@@ -215,6 +221,14 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
               cursor: pointer;
               font-size: 13px;
               font-weight: 500;
+              transition: all 0.2s;
+            }
+            .btn:hover {
+              transform: translateY(-1px);
+            }
+            .btn:disabled {
+              opacity: 0.5;
+              cursor: not-allowed;
             }
             .btn-primary {
               background: #22c55e;
@@ -225,28 +239,232 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
               color: #e5e7eb;
               border: 1px solid rgba(148, 163, 184, 0.5);
             }
+            .status {
+              margin-top: 12px;
+              padding: 8px;
+              border-radius: 8px;
+              font-size: 12px;
+              display: none;
+            }
+            .status.success {
+              background: rgba(34, 197, 94, 0.1);
+              color: #4ade80;
+              border: 1px solid rgba(34, 197, 94, 0.3);
+            }
+            .status.error {
+              background: rgba(239, 68, 68, 0.1);
+              color: #ef4444;
+              border: 1px solid rgba(239, 68, 68, 0.3);
+            }
+            .loading {
+              display: inline-block;
+              width: 12px;
+              height: 12px;
+              border: 2px solid #e5e7eb;
+              border-radius: 50%;
+              border-top-color: #22c55e;
+              animation: spin 1s ease-in-out infinite;
+              margin-right: 8px;
+            }
+            @keyframes spin {
+              to { transform: rotate(360deg); }
+            }
           </style>
         </head>
         <body>
           <main class="card">
-            <div class="badge">Fluxi conectado</div>
+            <div class="badge" id="statusBadge">Fluxi conectado</div>
             <h1>Fluxi – Multichannel Sync</h1>
             <p>La tienda <strong>${shop ?? 'Shopify store'}</strong> está conectada correctamente a Fluxi.</p>
             <p>Desde aquí vas a poder sincronizar productos, inventario y órdenes entre tus canales.</p>
 
             <div class="actions">
-              <button class="btn btn-primary" onclick="window.location.reload()">
-                Actualizar estado
+              <button class="btn btn-primary" onclick="syncProducts()">
+                <span id="syncIcon" style="display:none;"><div class="loading"></div></span>
+                Sincronizar Productos
               </button>
-              <button class="btn btn-secondary" onclick="window.open('https://app.fluxi.com', '_blank')">
+              <button class="btn btn-secondary" onclick="openFluxiPanel()">
                 Abrir panel Fluxi
               </button>
             </div>
+
+            <div id="statusMessage" class="status"></div>
           </main>
+
+          <script>
+            const shopDomain = '${shop ?? ''}';
+            const baseUrl = window.location.origin;
+
+            async function syncProducts() {
+              if (!shopDomain) {
+                showStatus('error', 'Dominio de tienda no disponible');
+                return;
+              }
+
+              const btn = document.querySelector('.btn-primary');
+              const icon = document.getElementById('syncIcon');
+              const originalText = btn.innerHTML;
+
+              // Show loading
+              btn.disabled = true;
+              icon.style.display = 'inline-block';
+              btn.innerHTML = icon.outerHTML + 'Sincronizando...';
+
+              try {
+                const response = await fetch(\`\${baseUrl}/shopify/products/import\`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ shop: shopDomain })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                  showStatus('success', \`Se sincronizaron \${data.count} productos correctamente\`);
+                  updateBadge('success', 'Sincronización exitosa');
+                } else {
+                  showStatus('error', data.message || 'Error en sincronización');
+                  updateBadge('error', 'Error de sincronización');
+                }
+              } catch (error) {
+                console.error('Sync error:', error);
+                showStatus('error', 'Error de conexión');
+                updateBadge('error', 'Error de conexión');
+              } finally {
+                // Reset button
+                btn.disabled = false;
+                icon.style.display = 'none';
+                btn.innerHTML = originalText;
+              }
+            }
+
+            function openFluxiPanel() {
+              // Open main Fluxi panel with shop context
+              const fluxiUrl = \`https://app.fluxi.com?shop=\${encodeURIComponent(shopDomain)}\`;
+              window.open(fluxiUrl, '_blank');
+            }
+
+            function showStatus(type, message) {
+              const statusEl = document.getElementById('statusMessage');
+              statusEl.className = \`status \${type}\`;
+              statusEl.textContent = message;
+              statusEl.style.display = 'block';
+
+              // Auto-hide after 5 seconds
+              setTimeout(() => {
+                statusEl.style.display = 'none';
+              }, 5000);
+            }
+
+            function updateBadge(type, message) {
+              const badge = document.getElementById('statusBadge');
+              badge.className = \`badge \${type === 'error' ? 'error' : ''}\`;
+              badge.textContent = message;
+            }
+
+            // Check if shop is connected on load
+            window.addEventListener('load', async () => {
+              if (!shopDomain) {
+                updateBadge('error', 'Tienda no conectada');
+                showStatus('error', 'Esta tienda no está conectada a Fluxi aún');
+                return;
+              }
+
+              try {
+                // Test connection by checking if shop exists
+                const response = await fetch(\`\${baseUrl}/shopify/test?shop=\${encodeURIComponent(shopDomain)}\`);
+                const data = await response.json();
+
+                if (data.success) {
+                  updateBadge('success', 'Tienda conectada');
+                } else {
+                  updateBadge('error', 'Tienda no conectada');
+                  showStatus('error', 'La tienda no está conectada. Contacta soporte.');
+                }
+              } catch (error) {
+                updateBadge('error', 'Error de conexión');
+                showStatus('error', 'Error verificando conexión');
+              }
+            });
+          </script>
         </body>
       </html>
     `;
 
     return reply.send(html);
+  });
+
+  // 🔹 RUTA PARA GENERAR LINK DE INSTALACIÓN (desde dashboard)
+  app.get('/channels/shopify/install-link', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { shop } = request.query as { shop?: string };
+
+    if (!shop) {
+      return reply.code(400).send({ success: false, message: 'Parámetro shop requerido' });
+    }
+
+    // Verificar que la tienda no esté ya conectada
+    try {
+      const existingShop = await getShopByDomain(shop);
+      if (existingShop) {
+        return reply.send({
+          success: true,
+          shop,
+          status: 'already_connected',
+          message: 'Esta tienda ya está conectada',
+          connected_at: existingShop.installed_at
+        });
+      }
+    } catch (error) {
+      // Ignorar errores de BD por ahora
+    }
+
+    // Generar URL de instalación
+    const installUrl = `${request.protocol}://${request.hostname}/auth/shopify?shop=${shop}`;
+
+    return reply.send({
+      success: true,
+      shop,
+      install_url: installUrl,
+      status: 'ready_to_install',
+      message: 'Comparte este link con el propietario de la tienda Shopify'
+    });
+  });
+
+  // 🔹 RUTA PARA VERIFICAR ESTADO DE CONEXIÓN
+  app.get('/channels/shopify/status', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { shop } = request.query as { shop?: string };
+
+    if (!shop) {
+      return reply.code(400).send({ success: false, message: 'Parámetro shop requerido' });
+    }
+
+    try {
+      const shopRecord = await getShopByDomain(shop);
+
+      if (shopRecord) {
+        return reply.send({
+          success: true,
+          shop,
+          status: 'connected',
+          connected_at: shopRecord.installed_at,
+          last_sync: shopRecord.last_sync,
+          scopes: shopRecord.scope
+        });
+      } else {
+        return reply.send({
+          success: true,
+          shop,
+          status: 'not_connected',
+          message: 'Tienda no conectada aún'
+        });
+      }
+    } catch (error) {
+      return reply.code(500).send({
+        success: false,
+        message: 'Error verificando estado de conexión'
+      });
+    }
   });
 }
