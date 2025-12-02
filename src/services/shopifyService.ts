@@ -1,18 +1,16 @@
+// src/services/shopifyService.ts
+import axios from "axios";
 import { supabase } from "../supabaseClient";
 
 export interface ShopRecord {
   id: string;
   shop_domain: string;
   access_token: string;
-  scope?: string;
-  installed_at: string;
-  last_sync?: string;
-  created_at: string;
-  updated_at: string;
+  scope: string | null;
 }
 
 /**
- * Get a shop record by domain from Supabase
+ * Obtiene una tienda Shopify desde la tabla `shops`
  */
 export async function getShopByDomain(shopDomain: string): Promise<ShopRecord | null> {
   const { data, error } = await supabase
@@ -22,103 +20,67 @@ export async function getShopByDomain(shopDomain: string): Promise<ShopRecord | 
     .single();
 
   if (error) {
-    if (error.code === 'PGRST116') {
-      // No rows returned
-      return null;
-    }
-    throw new Error(`Error fetching shop: ${error.message}`);
+    console.error("[getShopByDomain] error", error);
+    return null;
   }
 
-  return data;
+  return data as ShopRecord;
 }
 
 /**
- * Create or update a shop record in Supabase
+ * Crea/actualiza tienda Shopify en la tabla `shops`
  */
 export async function upsertShop(params: {
   shopDomain: string;
   accessToken: string;
   scope?: string;
-}): Promise<void> {
+}) {
   const { shopDomain, accessToken, scope } = params;
 
-  const { error } = await supabase
-    .from("shops")
-    .upsert(
-      {
-        shop_domain: shopDomain,
-        access_token: accessToken,
-        scope,
-        updated_at: new Date().toISOString(),
-      },
-      {
-        onConflict: "shop_domain",
-      }
-    );
+  const { error } = await supabase.from("shops").upsert(
+    {
+      shop_domain: shopDomain,
+      access_token: accessToken,
+      scope: scope || null,
+      installed_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "shop_domain" }
+  );
 
   if (error) {
-    throw new Error(`Error upserting shop: ${error.message}`);
+    console.error("[upsertShop] error", error);
+    throw error;
   }
 }
 
 /**
- * Generic function to make requests to Shopify API
+ * Helper genérico para llamar a la API de Shopify Admin
  */
 export async function shopifyRequest<T>(
   shopDomain: string,
   accessToken: string,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   data?: any
 ): Promise<T> {
-  const apiVersion = process.env.SHOPIFY_API_VERSION || '2025-01';
-  const baseUrl = `https://${shopDomain}/admin/api/${apiVersion}`;
-  const url = `${baseUrl}${path}`;
+  const version = process.env.SHOPIFY_API_VERSION || "2023-10";
+  const url = `https://${shopDomain}/admin/api/${version}${path}`;
 
-  const headers: Record<string, string> = {
-    'X-Shopify-Access-Token': accessToken,
-    'Content-Type': 'application/json',
-  };
+  try {
+    const res = await axios.request<T>({
+      url,
+      method,
+      data,
+      headers: {
+        "X-Shopify-Access-Token": accessToken,
+        "Content-Type": "application/json",
+      },
+    });
 
-  const config: RequestInit = {
-    method,
-    headers,
-  };
-
-  if (data && (method === 'POST' || method === 'PUT')) {
-    config.body = JSON.stringify(data);
-  }
-
-  const response = await fetch(url, config);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `Shopify API error ${response.status}: ${response.statusText}. ${errorText}`
-    );
-  }
-
-  // For DELETE requests, there might be no body
-  if (method === 'DELETE' && response.status === 200) {
-    return {} as T;
-  }
-
-  return response.json();
-}
-
-/**
- * Update the last_sync timestamp for a shop
- */
-export async function updateShopLastSync(shopDomain: string): Promise<void> {
-  const { error } = await supabase
-    .from("shops")
-    .update({
-      last_sync: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("shop_domain", shopDomain);
-
-  if (error) {
-    throw new Error(`Error updating shop last_sync: ${error.message}`);
+    return res.data;
+  } catch (err: any) {
+    console.error("[shopifyRequest] error", method, path, err?.response?.data || err.message);
+    throw err;
   }
 }

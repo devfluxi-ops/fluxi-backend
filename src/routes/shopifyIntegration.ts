@@ -1,82 +1,57 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import { getShopByDomain, shopifyRequest, updateShopLastSync } from "../services/shopifyService";
+import { syncShopifyProducts, syncShopifyInventory } from "../services/shopifySyncService";
 import { getUserFromRequest } from "../utils/auth";
 
-type ImportProductsBody = {
-  shop: string;
-};
-
-type SyncInventoryBody = {
-  shop: string;
-};
+interface SyncBody {
+  shop: string;      // fluxi-test-app.myshopify.com
+  account_id: string; // id de la cuenta dueña del canal
+}
 
 export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
-  // Check if environment variables are configured
-  if (!process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET) {
-    app.log.warn("Shopify environment variables not configured - integration routes using defaults for testing");
-    // Continue with defaults for testing
-  }
   // POST /shopify/products/import
   app.post(
     "/shopify/products/import",
-    async (
-      request: FastifyRequest<{ Body: ImportProductsBody }>,
-      reply: FastifyReply
-    ) => {
+    async (request: FastifyRequest<{ Body: SyncBody }>, reply: FastifyReply) => {
       try {
         // Validate authentication
         const user = getUserFromRequest(request);
 
-        const { shop } = request.body;
+        const { shop, account_id } = request.body;
 
-        if (!shop) {
-          return reply.code(400).send({ success: false, message: "Parámetro 'shop' requerido" });
-        }
-
-        // 1. Buscar la tienda en Supabase
-        const shopRecord = await getShopByDomain(shop);
-        if (!shopRecord) {
-          return reply.code(400).send({
+        if (!shop || !account_id) {
+          return reply.status(400).send({
             success: false,
-            message: "Tienda no conectada. Instala la app primero."
+            message: "shop y account_id son requeridos",
           });
         }
 
-        // 2. Llamar a Shopify API para obtener productos
-        const productsResponse = await shopifyRequest<any>(
-          shopRecord.shop_domain,
-          shopRecord.access_token,
-          'GET',
-          '/products.json?limit=250'
-        );
+        // Verificar que el usuario pertenece a la cuenta
+        if (user.account_id !== account_id) {
+          return reply.status(403).send({
+            success: false,
+            message: "No tienes acceso a esta cuenta",
+          });
+        }
 
-        const products = productsResponse.products || [];
-        const count = products.length;
-
-        // TODO: Mapear productos a las tablas internas de Fluxi
-        // - Crear registros en channel_products_staging
-        // - Mapear a products, product_variants, etc.
-        // - Manejar imágenes, categorías, etc.
-
-        // 3. Actualizar last_sync
-        await updateShopLastSync(shopRecord.shop_domain);
-
-        // 4. Responder con resumen
-        return reply.send({
-          success: true,
-          count,
-          products: products.slice(0, 5), // Mostrar primeros 5 como ejemplo
-          message: `Se encontraron ${count} productos en Shopify`
+        const result = await syncShopifyProducts({
+          accountId: account_id,
+          shopDomain: shop,
         });
 
+        return reply.send({
+          success: true,
+          imported: result.imported,
+          products: result.products,
+          message: `Se importaron ${result.imported} productos desde Shopify`,
+        });
       } catch (error: any) {
         if (error.message?.includes('Authentication required')) {
           return reply.code(401).send({ success: false, message: 'Authentication required' });
         }
-        request.log.error(error, "Error importando productos de Shopify");
+        request.log.error(error, "Error sincronizando productos de Shopify");
         return reply.code(500).send({
           success: false,
-          message: "Error importando productos",
+          message: "Error al sincronizar productos desde Shopify",
           error: error.message
         });
       }
@@ -86,56 +61,38 @@ export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
   // POST /shopify/inventory/sync
   app.post(
     "/shopify/inventory/sync",
-    async (
-      request: FastifyRequest<{ Body: SyncInventoryBody }>,
-      reply: FastifyReply
-    ) => {
+    async (request: FastifyRequest<{ Body: SyncBody }>, reply: FastifyReply) => {
       try {
         // Validate authentication
         const user = getUserFromRequest(request);
 
-        const { shop } = request.body;
+        const { shop, account_id } = request.body;
 
-        if (!shop) {
-          return reply.code(400).send({ success: false, message: "Parámetro 'shop' requerido" });
-        }
-
-        // 1. Buscar la tienda en Supabase
-        const shopRecord = await getShopByDomain(shop);
-        if (!shopRecord) {
-          return reply.code(400).send({
+        if (!shop || !account_id) {
+          return reply.status(400).send({
             success: false,
-            message: "Tienda no conectada. Instala la app primero."
+            message: "shop y account_id son requeridos",
           });
         }
 
-        // 2. Llamar a Shopify API para obtener niveles de inventario
-        const inventoryResponse = await shopifyRequest<any>(
-          shopRecord.shop_domain,
-          shopRecord.access_token,
-          'GET',
-          '/inventory_levels.json?limit=250'
-        );
+        // Verificar que el usuario pertenece a la cuenta
+        if (user.account_id !== account_id) {
+          return reply.status(403).send({
+            success: false,
+            message: "No tienes acceso a esta cuenta",
+          });
+        }
 
-        const inventoryLevels = inventoryResponse.inventory_levels || [];
-        const count = inventoryLevels.length;
-
-        // TODO: Sincronizar inventario con las tablas internas de Fluxi
-        // - Actualizar inventory_stock_items
-        // - Mapear inventory_item_id a product_variant_id
-        // - Manejar warehouses/inventories
-
-        // 3. Actualizar last_sync
-        await updateShopLastSync(shopRecord.shop_domain);
-
-        // 4. Responder con resumen
-        return reply.send({
-          success: true,
-          count,
-          inventory: inventoryLevels.slice(0, 5), // Mostrar primeros 5 como ejemplo
-          message: `Se encontraron ${count} niveles de inventario en Shopify`
+        const result = await syncShopifyInventory({
+          accountId: account_id,
+          shopDomain: shop,
         });
 
+        return reply.send({
+          success: true,
+          updated: result.updated,
+          message: `Se actualizaron ${result.updated} niveles de inventario desde Shopify`,
+        });
       } catch (error: any) {
         if (error.message?.includes('Authentication required')) {
           return reply.code(401).send({ success: false, message: 'Authentication required' });
@@ -143,7 +100,7 @@ export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
         request.log.error(error, "Error sincronizando inventario de Shopify");
         return reply.code(500).send({
           success: false,
-          message: "Error sincronizando inventario",
+          message: "Error al sincronizar inventario desde Shopify",
           error: error.message
         });
       }

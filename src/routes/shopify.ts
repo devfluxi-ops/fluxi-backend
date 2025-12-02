@@ -143,6 +143,7 @@ export async function shopifyRoutes(app: FastifyInstance) {
     }
   });
 
+
   // POST /shopify/webhooks - Receive Shopify webhooks
   app.post("/shopify/webhooks", async (req: FastifyRequest, reply: FastifyReply) => {
     try {
