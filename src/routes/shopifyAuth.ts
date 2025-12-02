@@ -143,4 +143,104 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
       });
     }
   );
+
+  // 🔹 RUTA PARA EL FRONT EMBEBIDO EN SHOPIFY
+  app.get('/app', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { shop } = request.query as { shop?: string };
+
+    reply.type('text/html; charset=utf-8');
+
+    const html = `
+      <!doctype html>
+      <html lang="es">
+        <head>
+          <meta charset="utf-8" />
+          <title>Fluxi – Multichannel Sync</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <style>
+            body {
+              margin: 0;
+              font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+              background: #020617;
+              color: #e5e7eb;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 100vh;
+            }
+            .card {
+              background: radial-gradient(circle at top left, #1d4ed8, #020617);
+              border-radius: 16px;
+              padding: 24px 28px;
+              max-width: 520px;
+              width: 100%;
+              box-shadow: 0 18px 45px rgba(15, 23, 42, 0.8);
+              border: 1px solid rgba(148, 163, 184, 0.35);
+            }
+            h1 {
+              font-size: 22px;
+              margin: 0 0 8px 0;
+            }
+            p {
+              margin: 6px 0;
+              font-size: 14px;
+              color: #cbd5f5;
+            }
+            .badge {
+              display: inline-flex;
+              align-items: center;
+              padding: 2px 8px;
+              border-radius: 999px;
+              font-size: 11px;
+              background: rgba(22, 163, 74, 0.1);
+              color: #4ade80;
+              border: 1px solid rgba(34, 197, 94, 0.3);
+              margin-bottom: 10px;
+            }
+            .actions {
+              margin-top: 18px;
+              display: flex;
+              gap: 10px;
+            }
+            .btn {
+              padding: 8px 14px;
+              border-radius: 999px;
+              border: none;
+              cursor: pointer;
+              font-size: 13px;
+              font-weight: 500;
+            }
+            .btn-primary {
+              background: #22c55e;
+              color: #022c22;
+            }
+            .btn-secondary {
+              background: transparent;
+              color: #e5e7eb;
+              border: 1px solid rgba(148, 163, 184, 0.5);
+            }
+          </style>
+        </head>
+        <body>
+          <main class="card">
+            <div class="badge">Fluxi conectado</div>
+            <h1>Fluxi – Multichannel Sync</h1>
+            <p>La tienda <strong>${shop ?? 'Shopify store'}</strong> está conectada correctamente a Fluxi.</p>
+            <p>Desde aquí vas a poder sincronizar productos, inventario y órdenes entre tus canales.</p>
+
+            <div class="actions">
+              <button class="btn btn-primary" onclick="window.location.reload()">
+                Actualizar estado
+              </button>
+              <button class="btn btn-secondary" onclick="window.open('https://app.fluxi.com', '_blank')">
+                Abrir panel Fluxi
+              </button>
+            </div>
+          </main>
+        </body>
+      </html>
+    `;
+
+    return reply.send(html);
+  });
 }
