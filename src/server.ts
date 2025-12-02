@@ -12,6 +12,8 @@ import { erpRoutes } from "./routes/erp";
 import { syncRoutes } from "./routes/sync";
 import { registerShopifyAuthRoutes } from "./routes/shopifyAuth";
 import { registerShopifyTestRoutes } from "./routes/shopifyTest";
+import { registerShopifyIntegrationRoutes } from "./routes/shopifyIntegration";
+import { registerShopifyWebhooksRoutes } from "./routes/shopifyWebhooks";
 
 dotenv.config();
 
@@ -110,6 +112,8 @@ erpRoutes(app);
 syncRoutes(app);
 registerShopifyAuthRoutes(app);
 registerShopifyTestRoutes(app);
+registerShopifyIntegrationRoutes(app);
+registerShopifyWebhooksRoutes(app);
 
 const port = Number(process.env.PORT) || 4000;
 

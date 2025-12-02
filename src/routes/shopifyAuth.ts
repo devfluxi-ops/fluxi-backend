@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import crypto from "crypto";
-import { supabase } from "../supabaseClient";
+import { upsertShop } from "../services/shopifyService";
 
 type InstallQuery = {
   shop: string;              // dominio .myshopify.com
@@ -11,23 +11,25 @@ type CallbackQuery = {
   code: string;
   hmac: string;
   state?: string;
+  host?: string;
   [key: string]: any;
 };
 
 export async function registerShopifyAuthRoutes(app: FastifyInstance) {
-  const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY!;
-  const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET!;
-  const SHOPIFY_SCOPES = process.env.SHOPIFY_SCOPES!;
-  const SHOPIFY_REDIRECT_URI = process.env.SHOPIFY_REDIRECT_URI!;
+  const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
+  const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
+  const SHOPIFY_SCOPES = process.env.SHOPIFY_SCOPES;
+  const SHOPIFY_APP_URL = process.env.SHOPIFY_APP_URL;
 
-  if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET || !SHOPIFY_SCOPES || !SHOPIFY_REDIRECT_URI) {
-    app.log.error("Faltan variables de entorno de Shopify");
+  if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET || !SHOPIFY_SCOPES || !SHOPIFY_APP_URL) {
+    app.log.warn("Shopify environment variables not configured - Shopify routes disabled");
+    return; // Skip registration if env vars are missing
   }
 
   // 🔹 1. Iniciar instalación: redirigir a Shopify OAuth
-  // GET /auth/shopify/install?shop=enohfit.myshopify.com
+  // GET /auth/shopify?shop=enohfit.myshopify.com
   app.get(
-    "/auth/shopify/install",
+    "/auth/shopify",
     async (
       request: FastifyRequest<{ Querystring: InstallQuery }>,
       reply: FastifyReply
@@ -38,13 +40,15 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
         return reply.code(400).send({ success: false, message: "Parámetro 'shop' inválido" });
       }
 
-      const state = crypto.randomBytes(16).toString("hex"); // para CSRF si luego quieres guardarlo
+      // TODO: Store state in database/session for CSRF protection
+      const state = crypto.randomBytes(16).toString("hex");
 
+      const redirectUri = `${SHOPIFY_APP_URL}/auth/shopify/callback`;
       const installUrl =
         `https://${shop}/admin/oauth/authorize` +
         `?client_id=${SHOPIFY_API_KEY}` +
         `&scope=${encodeURIComponent(SHOPIFY_SCOPES)}` +
-        `&redirect_uri=${encodeURIComponent(SHOPIFY_REDIRECT_URI)}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
         `&state=${state}`;
 
       return reply.redirect(installUrl);
@@ -52,7 +56,7 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
   );
 
   // 🔹 2. Callback de Shopify: aquí llega el code
-  // GET /auth/shopify/callback?shop=...&code=...&hmac=...
+  // GET /auth/shopify/callback?shop=...&code=...&hmac=...&host=...
   app.get(
     "/auth/shopify/callback",
     async (
@@ -60,87 +64,77 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
       reply: FastifyReply
     ) => {
       const query = request.query;
-      const { shop, code, hmac } = query;
+      const { shop, code, hmac, host } = query;
 
       if (!shop || !code || !hmac) {
         return reply
           .code(400)
-          .send({ success: false, message: "Faltan parámetros 'shop', 'code' o 'hmac'" });
+          .send({ success: false, message: "Faltan parámetros requeridos: shop, code, hmac" });
       }
 
-      // ✅ Validar HMAC de Shopify (seguridad)
-      const { hmac: _hmac, signature, ...rest } = query as any;
+      try {
+        // ✅ Validar HMAC de Shopify (seguridad)
+        const { hmac: _hmac, ...paramsToVerify } = query as any;
 
-      const message = Object.keys(rest)
-        .sort()
-        .map((key) => `${key}=${rest[key]}`)
-        .join("&");
+        const message = Object.keys(paramsToVerify)
+          .sort()
+          .map((key) => `${key}=${paramsToVerify[key]}`)
+          .join("&");
 
-      const generatedHmac = crypto
-        .createHmac("sha256", SHOPIFY_API_SECRET)
-        .update(message)
-        .digest("hex");
+        const generatedHmac = crypto
+          .createHmac("sha256", SHOPIFY_API_SECRET)
+          .update(message)
+          .digest("hex");
 
-      if (generatedHmac !== hmac) {
-        request.log.error({ hmac, generatedHmac }, "HMAC inválido en callback de Shopify");
-        return reply.code(400).send({ success: false, message: "HMAC inválido" });
-      }
+        if (generatedHmac !== hmac) {
+          request.log.error({ hmac, generatedHmac }, "HMAC inválido en callback de Shopify");
+          return reply.code(400).send({ success: false, message: "HMAC inválido" });
+        }
 
-      // 🔁 Intercambiar code por access_token
-      const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: SHOPIFY_API_KEY,
-          client_secret: SHOPIFY_API_SECRET,
-          code,
-        }),
-      });
+        // 🔁 Intercambiar code por access_token
+        const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: SHOPIFY_API_KEY,
+            client_secret: SHOPIFY_API_SECRET,
+            code,
+          }),
+        });
 
-      if (!tokenRes.ok) {
-        const text = await tokenRes.text();
-        request.log.error({ text }, "Error al obtener access_token de Shopify");
+        if (!tokenRes.ok) {
+          const text = await tokenRes.text();
+          request.log.error({ text }, "Error obteniendo access_token de Shopify");
+          return reply
+            .code(500)
+            .send({ success: false, message: "No se pudo obtener access_token de Shopify" });
+        }
+
+        const tokenJson = (await tokenRes.json()) as {
+          access_token: string;
+          scope: string;
+        };
+
+        const accessToken = tokenJson.access_token;
+        const scope = tokenJson.scope;
+
+        // 💾 Guardar / actualizar tienda en Supabase
+        await upsertShop({
+          shopDomain: shop,
+          accessToken,
+          scope,
+        });
+
+        // ✅ Redirigir a la app embebida
+        const appUrl = `${SHOPIFY_APP_URL}/app?shop=${shop}${host ? `&host=${host}` : ''}`;
+        return reply.redirect(appUrl);
+
+      } catch (error: any) {
+        request.log.error(error, "Error en callback de Shopify");
         return reply
           .code(500)
-          .send({ success: false, message: "No se pudo obtener access_token de Shopify" });
+          .send({ success: false, message: "Error interno del servidor" });
       }
-
-      const tokenJson = (await tokenRes.json()) as {
-        access_token: string;
-        scope: string;
-      };
-
-      const accessToken = tokenJson.access_token;
-      const scopes = tokenJson.scope;
-
-      // 💾 Guardar / actualizar en Supabase
-      const { data, error } = await supabase
-        .from("shopify_shops")
-        .upsert(
-          {
-            shop_domain: shop,
-            access_token: accessToken,
-            scopes,
-            status: "active",
-          },
-          { onConflict: "shop_domain" }
-        )
-        .select("*")
-        .single();
-
-      if (error) {
-        request.log.error(error, "Error guardando tienda Shopify en BD");
-        return reply
-          .code(500)
-          .send({ success: false, message: "Error guardando tienda Shopify en BD" });
-      }
-
-      // 👌 Respuesta simple (luego puedes redirigir al panel de Fluxi)
-      return reply.send({
-        success: true,
-        message: "Tienda Shopify conectada correctamente",
-        shop: data.shop_domain,
-      });
     }
   );
 
