@@ -1,342 +1,355 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { supabase } from "../supabaseClient";
-import { getUserFromRequest, validateAccountAccess, validateOwnerPermissions } from "../utils/auth";
-import { sendSuccess, sendError, sendNotFound, sendForbidden } from "../utils/responses";
+import { getUserFromRequest } from "../utils/auth";
 
 export async function accountsRoutes(app: FastifyInstance) {
+  // POST /accounts - Create new account (for new users)
+  app.post("/accounts", async (req: FastifyRequest<{ Body: { name: string; slug?: string } }>, reply: FastifyReply) => {
+    try {
+      const user = getUserFromRequest(req);
+      const { name, slug } = req.body;
+
+      if (!name) {
+        return reply.code(400).send({ success: false, message: "Account name is required" });
+      }
+
+      // Check if user already has an account
+      const { data: existingAccount } = await supabase
+        .from('account_users')
+        .select('account_id')
+        .eq('user_id', user.userId)
+        .single();
+
+      if (existingAccount) {
+        return reply.code(400).send({ success: false, message: "User already has an account" });
+      }
+
+      // Generate slug if not provided
+      const accountSlug = slug || name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+      // Check if slug is unique
+      const { data: existingSlug } = await supabase
+        .from('accounts')
+        .select('id')
+        .eq('slug', accountSlug)
+        .single();
+
+      if (existingSlug) {
+        return reply.code(400).send({ success: false, message: "Account slug already exists" });
+      }
+
+      // Create account
+      const { data: account, error: accountError } = await supabase
+        .from('accounts')
+        .insert({
+          name,
+          slug: accountSlug,
+          owner_id: user.userId
+        })
+        .select()
+        .single();
+
+      if (accountError) {
+        return reply.code(500).send({ success: false, message: "Error creating account" });
+      }
+
+      // Create account-user relationship
+      const { error: userError } = await supabase
+        .from('account_users')
+        .insert({
+          account_id: account.id,
+          user_id: user.userId,
+          role: 'owner',
+          is_owner: true
+        });
+
+      if (userError) {
+        return reply.code(500).send({ success: false, message: "Error linking user to account" });
+      }
+
+      return reply.send({
+        success: true,
+        account: {
+          id: account.id,
+          name: account.name,
+          slug: account.slug,
+          role: 'owner'
+        }
+      });
+
+    } catch (error: any) {
+      if (error.message?.includes('Authentication required')) {
+        return reply.code(401).send({ success: false, message: 'Authentication required' });
+      }
+      return reply.code(500).send({ success: false, message: "Internal server error" });
+    }
+  });
+
   // GET /accounts - List user's accounts
   app.get("/accounts", async (req: FastifyRequest, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
 
       const { data, error } = await supabase
-        .from("accounts")
+        .from('account_users')
         .select(`
-          id,
-          name,
-          slug,
-          created_at,
-          updated_at,
-          account_users!inner(role)
+          account_id,
+          role,
+          is_owner,
+          accounts (
+            id,
+            name,
+            slug
+          )
         `)
-        .eq("account_users.user_id", user.userId);
+        .eq('user_id', user.userId);
 
       if (error) {
-        return reply.status(400).send({ success: false, error: error.message });
+        return reply.code(500).send({ success: false, message: "Error fetching accounts" });
       }
 
-      return reply.send({
-        success: true,
-        data: data.map((account: any) => ({
-          id: account.id,
-          name: account.name,
-          slug: account.slug,
-          owner_id: user.userId,
-          created_at: account.created_at,
-          updated_at: account.updated_at
-        }))
-      });
+      const accounts = (data || []).map(item => ({
+        id: (item.accounts as any)?.id,
+        name: (item.accounts as any)?.name,
+        slug: (item.accounts as any)?.slug,
+        role: item.role
+      }));
+
+      return reply.send({ success: true, accounts });
+
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      if (error.message?.includes('Authentication required')) {
+        return reply.code(401).send({ success: false, message: 'Authentication required' });
+      }
+      return reply.code(500).send({ success: false, message: "Internal server error" });
     }
   });
 
-  // POST /accounts - Create new account
-  app.post("/accounts", async (req: FastifyRequest<{ Body: { name: string, slug?: string } }>, reply: FastifyReply) => {
-    try {
-      const user = getUserFromRequest(req);
-      const { name, slug } = req.body;
-
-      if (!name) {
-        return reply.status(400).send({
-          success: false,
-          error: "name is required"
-        });
-      }
-
-      // Create account
-      const { data: account, error: accountError } = await supabase
-        .from("accounts")
-        .insert({ name, slug })
-        .select()
-        .single();
-
-      if (accountError) {
-        return reply.status(400).send({ success: false, error: accountError.message });
-      }
-
-      // Add user as owner
-      const { error: memberError } = await supabase
-        .from("account_users")
-        .insert({
-          account_id: account.id,
-          user_id: user.userId,
-          role: 'owner'
-        });
-
-      if (memberError) {
-        return reply.status(400).send({ success: false, error: memberError.message });
-      }
-
-      return reply.send({
-        success: true,
-        data: {
-          id: account.id,
-          name: account.name,
-          slug: account.slug,
-          owner_id: user.userId,
-          created_at: account.created_at,
-          updated_at: account.updated_at
-        }
-      });
-    } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
-    }
-  });
-
-  // GET /accounts/:accountId/members - List account members
+  // GET /accounts/{accountId}/members - List account members
   app.get("/accounts/:accountId/members", async (req: FastifyRequest<{ Params: { accountId: string } }>, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
       const { accountId } = req.params;
 
-      // Validate user has access to account
-      await validateAccountAccess(user, accountId);
+      // Verify user has access to this account
+      const { data: userAccess } = await supabase
+        .from('account_users')
+        .select('role')
+        .eq('account_id', accountId)
+        .eq('user_id', user.userId)
+        .single();
+
+      if (!userAccess) {
+        return reply.code(403).send({ success: false, message: "Access denied" });
+      }
 
       const { data, error } = await supabase
-        .from("account_users")
+        .from('account_users')
         .select(`
           id,
-          account_id,
-          user_id,
           role,
-          created_at,
+          is_owner,
+          joined_at,
           users (
             id,
             email,
-            created_at
+            full_name
           )
         `)
-        .eq("account_id", accountId);
+        .eq('account_id', accountId);
 
       if (error) {
-        return reply.status(400).send({ success: false, error: error.message });
+        return reply.code(500).send({ success: false, message: "Error fetching members" });
       }
 
-      return reply.send({
-        success: true,
-        data: data.map((member: any) => ({
-          id: member.id,
-          account_id: member.account_id,
-          user_id: member.user_id,
-          role: member.role,
-          invited_by: null, // TODO: implement invitations
-          joined_at: member.created_at,
-          user: member.users
-        }))
-      });
+      const members = (data || []).map(item => ({
+        id: item.id,
+        account_id: accountId,
+        user_id: (item.users as any)?.id,
+        role: item.role,
+        is_owner: item.is_owner,
+        joined_at: item.joined_at,
+        user: {
+          id: (item.users as any)?.id,
+          email: (item.users as any)?.email,
+          full_name: (item.users as any)?.full_name
+        }
+      }));
+
+      return reply.send({ success: true, data: members });
+
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      if (error.message?.includes('Authentication required')) {
+        return reply.code(401).send({ success: false, message: 'Authentication required' });
+      }
+      return reply.code(500).send({ success: false, message: "Internal server error" });
     }
   });
 
-  // GET /accounts/:accountId/users - Alias for members (for compatibility)
-  app.get("/accounts/:accountId/users", async (req: FastifyRequest<{ Params: { accountId: string } }>, reply: FastifyReply) => {
-    try {
-      const user = getUserFromRequest(req);
-      const { accountId } = req.params;
-
-      // Validate user has access to account
-      await validateAccountAccess(user, accountId);
-
-      const { data, error } = await supabase
-        .from("account_users")
-        .select(`
-          id,
-          account_id,
-          user_id,
-          role,
-          created_at,
-          users (
-            id,
-            email,
-            created_at
-          )
-        `)
-        .eq("account_id", accountId);
-
-      if (error) {
-        return reply.status(400).send({ success: false, error: error.message });
-      }
-
-      return reply.send({
-        success: true,
-        data: data.map((member: any) => ({
-          id: member.id,
-          account_id: member.account_id,
-          user_id: member.user_id,
-          role: member.role,
-          joined_at: member.created_at,
-          user: member.users
-        }))
-      });
-    } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
-    }
-  });
-
-  // POST /accounts/:accountId/members/invite - Invite member
-  app.post("/accounts/:accountId/members/invite", async (req: FastifyRequest<{
-    Params: { accountId: string },
-    Body: { email: string, role: string }
-  }>, reply: FastifyReply) => {
+  // POST /accounts/{accountId}/members/invite - Invite new member
+  app.post("/accounts/:accountId/members/invite", async (req: FastifyRequest<{ Params: { accountId: string }, Body: { email: string; role: string } }>, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
       const { accountId } = req.params;
       const { email, role } = req.body;
 
-      // Validate user has access to account
-      await validateAccountAccess(user, accountId);
+      // Verify user has admin/owner access
+      const { data: userAccess } = await supabase
+        .from('account_users')
+        .select('role')
+        .eq('account_id', accountId)
+        .eq('user_id', user.userId)
+        .single();
+
+      if (!userAccess || !['owner', 'admin'].includes(userAccess.role)) {
+        return reply.code(403).send({ success: false, message: "Insufficient permissions" });
+      }
 
       if (!email || !role) {
-        return reply.status(400).send({
-          success: false,
-          error: "email and role are required"
-        });
+        return reply.code(400).send({ success: false, message: "Email and role are required" });
+      }
+
+      if (!['owner', 'admin', 'member'].includes(role)) {
+        return reply.code(400).send({ success: false, message: "Invalid role" });
       }
 
       // Check if user exists
-      const { data: existingUser, error: userError } = await supabase
-        .from("users")
-        .select("id")
-        .eq("email", email)
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
         .single();
 
-      if (userError || !existingUser) {
-        return reply.status(400).send({
-          success: false,
-          error: "User with this email does not exist"
-        });
+      if (!existingUser) {
+        return reply.code(400).send({ success: false, message: "User not found. They must register first." });
       }
 
-      // Check if already member
+      // Check if already a member
       const { data: existingMember } = await supabase
-        .from("account_users")
-        .select("id")
-        .eq("account_id", accountId)
-        .eq("user_id", existingUser.id)
+        .from('account_users')
+        .select('id')
+        .eq('account_id', accountId)
+        .eq('user_id', existingUser.id)
         .single();
 
       if (existingMember) {
-        return reply.status(400).send({
-          success: false,
-          error: "User is already a member of this account"
-        });
+        return reply.code(400).send({ success: false, message: "User is already a member" });
       }
 
       // Add member
-      const { data: member, error: memberError } = await supabase
-        .from("account_users")
+      const { data, error } = await supabase
+        .from('account_users')
         .insert({
           account_id: accountId,
           user_id: existingUser.id,
-          role: role
+          role,
+          invited_by: user.userId
         })
         .select()
         .single();
 
-      if (memberError) {
-        return reply.status(400).send({ success: false, error: memberError.message });
-      }
-
-      return reply.send({
-        success: true,
-        data: {
-          id: member.id,
-          account_id: member.account_id,
-          user_id: member.user_id,
-          role: member.role,
-          invited_by: user.userId,
-          joined_at: member.created_at
-        }
-      });
-    } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
-    }
-  });
-
-  // PATCH /accounts/:accountId/members/:memberId - Update member role
-  app.patch("/accounts/:accountId/members/:memberId", async (req: FastifyRequest<{
-    Params: { accountId: string, memberId: string },
-    Body: { role: string }
-  }>, reply: FastifyReply) => {
-    try {
-      const user = getUserFromRequest(req);
-      const { accountId, memberId } = req.params;
-      const { role } = req.body;
-
-      // Validate user has access to account
-      await validateAccountAccess(user, accountId);
-
-      if (!role) {
-        return reply.status(400).send({
-          success: false,
-          error: "role is required"
-        });
-      }
-
-      const { data, error } = await supabase
-        .from("account_users")
-        .update({ role })
-        .eq("id", memberId)
-        .eq("account_id", accountId)
-        .select()
-        .single();
-
       if (error) {
-        return reply.status(400).send({ success: false, error: error.message });
+        return reply.code(500).send({ success: false, message: "Error inviting member" });
       }
 
       return reply.send({
         success: true,
         data: {
           id: data.id,
-          account_id: data.account_id,
-          user_id: data.user_id,
-          role: data.role,
-          invited_by: null,
-          joined_at: data.created_at
+          email,
+          role,
+          invited_by: user.userId
         }
       });
+
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      if (error.message?.includes('Authentication required')) {
+        return reply.code(401).send({ success: false, message: 'Authentication required' });
+      }
+      return reply.code(500).send({ success: false, message: "Internal server error" });
     }
   });
 
-  // DELETE /accounts/:accountId/members/:memberId - Remove member
-  app.delete("/accounts/:accountId/members/:memberId", async (req: FastifyRequest<{
-    Params: { accountId: string, memberId: string }
-  }>, reply: FastifyReply) => {
+  // PATCH /accounts/{accountId}/members/{memberId} - Update member role
+  app.patch("/accounts/:accountId/members/:memberId", async (req: FastifyRequest<{ Params: { accountId: string; memberId: string }, Body: { role: string } }>, reply: FastifyReply) => {
+    try {
+      const user = getUserFromRequest(req);
+      const { accountId, memberId } = req.params;
+      const { role } = req.body;
+
+      // Verify user has admin/owner access
+      const { data: userAccess } = await supabase
+        .from('account_users')
+        .select('role')
+        .eq('account_id', accountId)
+        .eq('user_id', user.userId)
+        .single();
+
+      if (!userAccess || !['owner', 'admin'].includes(userAccess.role)) {
+        return reply.code(403).send({ success: false, message: "Insufficient permissions" });
+      }
+
+      if (!role || !['owner', 'admin', 'member'].includes(role)) {
+        return reply.code(400).send({ success: false, message: "Invalid role" });
+      }
+
+      // Update member role
+      const { error } = await supabase
+        .from('account_users')
+        .update({ role })
+        .eq('id', memberId)
+        .eq('account_id', accountId);
+
+      if (error) {
+        return reply.code(500).send({ success: false, message: "Error updating member role" });
+      }
+
+      return reply.send({ success: true, message: "Member role updated" });
+
+    } catch (error: any) {
+      if (error.message?.includes('Authentication required')) {
+        return reply.code(401).send({ success: false, message: 'Authentication required' });
+      }
+      return reply.code(500).send({ success: false, message: "Internal server error" });
+    }
+  });
+
+  // DELETE /accounts/{accountId}/members/{memberId} - Remove member
+  app.delete("/accounts/:accountId/members/:memberId", async (req: FastifyRequest<{ Params: { accountId: string; memberId: string } }>, reply: FastifyReply) => {
     try {
       const user = getUserFromRequest(req);
       const { accountId, memberId } = req.params;
 
-      // Validate user has access to account
-      await validateAccountAccess(user, accountId);
+      // Verify user has admin/owner access
+      const { data: userAccess } = await supabase
+        .from('account_users')
+        .select('role')
+        .eq('account_id', accountId)
+        .eq('user_id', user.userId)
+        .single();
 
-      const { error } = await supabase
-        .from("account_users")
-        .delete()
-        .eq("id", memberId)
-        .eq("account_id", accountId);
-
-      if (error) {
-        return reply.status(400).send({ success: false, error: error.message });
+      if (!userAccess || !['owner', 'admin'].includes(userAccess.role)) {
+        return reply.code(403).send({ success: false, message: "Insufficient permissions" });
       }
 
-      return reply.send({ success: true });
+      // Remove member
+      const { error } = await supabase
+        .from('account_users')
+        .delete()
+        .eq('id', memberId)
+        .eq('account_id', accountId);
+
+      if (error) {
+        return reply.code(500).send({ success: false, message: "Error removing member" });
+      }
+
+      return reply.send({ success: true, message: "Member removed" });
+
     } catch (error: any) {
-      return reply.status(401).send({ success: false, error: error.message });
+      if (error.message?.includes('Authentication required')) {
+        return reply.code(401).send({ success: false, message: 'Authentication required' });
+      }
+      return reply.code(500).send({ success: false, message: "Internal server error" });
     }
   });
 }

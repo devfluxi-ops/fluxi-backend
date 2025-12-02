@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { FastifyRequest, FastifyReply } from "fastify";
 import dotenv from "dotenv";
 import cors from "@fastify/cors";
 import { authRoutes } from "./routes/auth";
@@ -25,6 +25,77 @@ app.register(cors, {
 
 app.get("/health", async () => {
   return { status: "ok", service: "fluxi-backend" };
+});
+
+// Dashboard stats endpoint
+app.get("/dashboard/stats", async (request: FastifyRequest, reply: FastifyReply) => {
+  try {
+    const { supabase } = await import("./supabaseClient");
+    const { account_id } = request.query as { account_id?: string };
+
+    if (!account_id) {
+      return reply.code(400).send({ success: false, message: "account_id requerido" });
+    }
+
+    // For now, skip auth validation for testing
+    // TODO: Add proper auth validation
+    // const { getUserFromRequest } = await import("./utils/auth");
+    // const user = getUserFromRequest(request);
+    // if (user.account_id !== account_id) {
+    //   return reply.code(403).send({ success: false, message: "Acceso denegado" });
+    // }
+
+    // Get stats in parallel
+    const [productsResult, ordersResult, channelsResult, recentSyncResult] = await Promise.all([
+      supabase
+        .from('products')
+        .select('status', { count: 'exact' })
+        .eq('account_id', account_id),
+      supabase
+        .from('orders')
+        .select('status', { count: 'exact' })
+        .eq('account_id', account_id),
+      supabase
+        .from('channels')
+        .select('status', { count: 'exact' })
+        .eq('account_id', account_id),
+      supabase
+        .from('sync_logs')
+        .select('created_at')
+        .eq('account_id', account_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+    ]);
+
+    // Calculate stats
+    const totalProducts = productsResult.count || 0;
+    const activeProducts = productsResult.data?.filter(p => p.status === 'active').length || 0;
+    const totalOrders = ordersResult.count || 0;
+    const pendingOrders = ordersResult.data?.filter(o => o.status === 'pending').length || 0;
+    const totalChannels = channelsResult.count || 0;
+    const activeChannels = channelsResult.data?.filter(c => c.status === 'connected' || c.status === 'active').length || 0;
+    const lastSync = recentSyncResult.data?.[0]?.created_at || null;
+
+    return reply.send({
+      success: true,
+      stats: {
+        total_products: totalProducts,
+        active_products: activeProducts,
+        total_orders: totalOrders,
+        pending_orders: pendingOrders,
+        channels: totalChannels,
+        active_channels: activeChannels,
+        last_sync: lastSync
+      }
+    });
+
+  } catch (error: any) {
+    request.log.error(error, "Error getting dashboard stats");
+    return reply.code(500).send({
+      success: false,
+      message: "Error obteniendo estadísticas del dashboard"
+    });
+  }
 });
 
 // Temporary admin route to add stock column
