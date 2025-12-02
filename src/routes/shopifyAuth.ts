@@ -21,6 +21,7 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
   const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || 'test-secret';
   const SHOPIFY_SCOPES = process.env.SHOPIFY_SCOPES || 'read_products';
   const SHOPIFY_APP_URL = process.env.SHOPIFY_APP_URL || 'https://fluxi-backend.onrender.com';
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000'; // Default to localhost for development
 
   if (!process.env.SHOPIFY_API_KEY || !process.env.SHOPIFY_API_SECRET || !process.env.SHOPIFY_SCOPES || !process.env.SHOPIFY_APP_URL) {
     app.log.warn("Shopify environment variables not configured - using defaults for testing");
@@ -128,7 +129,7 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
 
         // ✅ Redirigir al panel principal de Fluxi (dashboard)
         // El dashboard debe manejar la configuración del canal Shopify
-        const dashboardUrl = `https://app.fluxi.com/channels/shopify/setup?shop=${shop}&token=${accessToken}`;
+        const dashboardUrl = `${FRONTEND_URL}/channels/shopify/setup?shop=${shop}&token=${accessToken}`;
         return reply.redirect(dashboardUrl);
 
       } catch (error: any) {
@@ -343,7 +344,7 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
 
             function openFluxiPanel() {
               // Open main Fluxi panel with shop context
-              const fluxiUrl = \`https://app.fluxi.com?shop=\${encodeURIComponent(shopDomain)}\`;
+              const fluxiUrl = \`${FRONTEND_URL}?shop=\${encodeURIComponent(shopDomain)}\`;
               window.open(fluxiUrl, '_blank');
             }
 
