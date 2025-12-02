@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { getShopByDomain, shopifyRequest, updateShopLastSync } from "../services/shopifyService";
+import { getUserFromRequest } from "../utils/auth";
 
 type ImportProductsBody = {
   shop: string;
@@ -22,13 +23,16 @@ export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
       request: FastifyRequest<{ Body: ImportProductsBody }>,
       reply: FastifyReply
     ) => {
-      const { shop } = request.body;
-
-      if (!shop) {
-        return reply.code(400).send({ success: false, message: "Parámetro 'shop' requerido" });
-      }
-
       try {
+        // Validate authentication
+        const user = getUserFromRequest(request);
+
+        const { shop } = request.body;
+
+        if (!shop) {
+          return reply.code(400).send({ success: false, message: "Parámetro 'shop' requerido" });
+        }
+
         // 1. Buscar la tienda en Supabase
         const shopRecord = await getShopByDomain(shop);
         if (!shopRecord) {
@@ -66,6 +70,9 @@ export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
         });
 
       } catch (error: any) {
+        if (error.message?.includes('Authentication required')) {
+          return reply.code(401).send({ success: false, message: 'Authentication required' });
+        }
         request.log.error(error, "Error importando productos de Shopify");
         return reply.code(500).send({
           success: false,
@@ -83,13 +90,16 @@ export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
       request: FastifyRequest<{ Body: SyncInventoryBody }>,
       reply: FastifyReply
     ) => {
-      const { shop } = request.body;
-
-      if (!shop) {
-        return reply.code(400).send({ success: false, message: "Parámetro 'shop' requerido" });
-      }
-
       try {
+        // Validate authentication
+        const user = getUserFromRequest(request);
+
+        const { shop } = request.body;
+
+        if (!shop) {
+          return reply.code(400).send({ success: false, message: "Parámetro 'shop' requerido" });
+        }
+
         // 1. Buscar la tienda en Supabase
         const shopRecord = await getShopByDomain(shop);
         if (!shopRecord) {
@@ -127,6 +137,9 @@ export async function registerShopifyIntegrationRoutes(app: FastifyInstance) {
         });
 
       } catch (error: any) {
+        if (error.message?.includes('Authentication required')) {
+          return reply.code(401).send({ success: false, message: 'Authentication required' });
+        }
         request.log.error(error, "Error sincronizando inventario de Shopify");
         return reply.code(500).send({
           success: false,

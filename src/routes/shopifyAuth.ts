@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import crypto from "crypto";
 import { upsertShop, getShopByDomain } from "../services/shopifyService";
+import { getUserFromRequest } from "../utils/auth";
 
 type InstallQuery = {
   shop: string;              // dominio .myshopify.com
@@ -398,11 +399,15 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
 
   // 🔹 RUTA PARA GENERAR LINK DE INSTALACIÓN (desde dashboard)
   app.get('/channels/shopify/install-link', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { shop } = request.query as { shop?: string };
+    try {
+      // Validate authentication
+      const user = getUserFromRequest(request);
 
-    if (!shop) {
-      return reply.code(400).send({ success: false, message: 'Parámetro shop requerido' });
-    }
+      const { shop } = request.query as { shop?: string };
+
+      if (!shop) {
+        return reply.code(400).send({ success: false, message: 'Parámetro shop requerido' });
+      }
 
     // Verificar que la tienda no esté ya conectada
     try {
@@ -430,15 +435,22 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
       status: 'ready_to_install',
       message: 'Comparte este link con el propietario de la tienda Shopify'
     });
+    } catch (error: any) {
+      return reply.code(401).send({ success: false, message: 'Authentication required' });
+    }
   });
 
   // 🔹 RUTA PARA VERIFICAR ESTADO DE CONEXIÓN
   app.get('/channels/shopify/status', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { shop } = request.query as { shop?: string };
+    try {
+      // Validate authentication
+      const user = getUserFromRequest(request);
 
-    if (!shop) {
-      return reply.code(400).send({ success: false, message: 'Parámetro shop requerido' });
-    }
+      const { shop } = request.query as { shop?: string };
+
+      if (!shop) {
+        return reply.code(400).send({ success: false, message: 'Parámetro shop requerido' });
+      }
 
     try {
       const shopRecord = await getShopByDomain(shop);
@@ -465,6 +477,9 @@ export async function registerShopifyAuthRoutes(app: FastifyInstance) {
         success: false,
         message: 'Error verificando estado de conexión'
       });
+    }
+    } catch (error: any) {
+      return reply.code(401).send({ success: false, message: 'Authentication required' });
     }
   });
 }
