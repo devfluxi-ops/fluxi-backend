@@ -14,6 +14,173 @@ function getUserFromRequest(req: FastifyRequest): any {
 }
 
 export async function shopifyRoutes(app: FastifyInstance) {
+  // POST /channels/:channelId/shopify-sync - Sync Shopify products into staging
+  app.post("/channels/:channelId/shopify-sync", async (req: FastifyRequest<{ Params: { channelId: string }, Body: { account_id: string } }>, reply: FastifyReply) => {
+    try {
+      const { channelId } = req.params;
+      const { account_id } = req.body;
+
+      if (!account_id) {
+        return reply.status(400).send({ success: false, error: "account_id is required" });
+      }
+
+      // Fetch channel info
+      const { data: channel, error: channelError } = await supabase
+        .from("channels")
+        .select("*")
+        .eq("id", channelId)
+        .single();
+
+      if (channelError || !channel) {
+        return reply.status(404).send({ success: false, error: "Channel not found" });
+      }
+
+      if (channel.account_id !== account_id) {
+        return reply.status(400).send({ success: false, error: "Channel does not belong to the provided account_id" });
+      }
+
+      // Channel type check (supports both 'shopify' in type or channel_type_id)
+      const channelType = channel.channel_type_id || channel.type;
+      if (channelType !== "shopify") {
+        return reply.status(400).send({ success: false, error: "Only Shopify channels are supported for this sync endpoint" });
+      }
+
+      const shopDomain = channel.external_id || channel.config?.shop_domain;
+      const accessToken = channel.access_token || channel.config?.access_token;
+
+      if (!shopDomain || !accessToken) {
+        return reply.status(400).send({ success: false, error: "Shopify credentials missing (shop_domain or access_token)" });
+      }
+
+      const apiBase = `https://${shopDomain}/admin/api/2023-10`;
+      const headers = {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": accessToken
+      };
+
+      // Fetch all products with cursor-based pagination
+      let nextUrl: string | null = `${apiBase}/products.json?limit=250`;
+      const allProducts: any[] = [];
+
+      while (nextUrl) {
+        const res = await fetch(nextUrl, { headers });
+        if (!res.ok) {
+          const text = await res.text();
+          return reply.status(502).send({
+            success: false,
+            error: `Shopify fetch failed: ${res.status}`,
+            details: text
+          });
+        }
+
+        const data = await res.json();
+        allProducts.push(...(data.products || []));
+
+        // Parse Link header for next page
+        const linkHeader = res.headers.get("link");
+        if (linkHeader && linkHeader.includes('rel="next"')) {
+          const matches = linkHeader.split(",").map(s => s.trim());
+          const nextLink = matches.find(s => s.endsWith('rel="next"'));
+          if (nextLink) {
+            const urlPart = nextLink.split(";")[0].replace(/<|>/g, "");
+            nextUrl = urlPart;
+          } else {
+            nextUrl = null;
+          }
+        } else {
+          nextUrl = null;
+        }
+      }
+
+      // Upsert into staging
+      let newProducts = 0;
+      let updatedProducts = 0;
+      const errors: { sku?: string; error: string }[] = [];
+
+      for (const product of allProducts) {
+        try {
+          const firstVariant = product.variants?.[0] || {};
+          const price = Number(firstVariant.price || 0);
+          const currency = firstVariant.currency || product.currency || "USD";
+          const stock = firstVariant.inventory_quantity ?? 0;
+          const status = product.status || "active";
+
+          const payload = {
+            account_id,
+            channel_id: channelId,
+            external_id: product.id?.toString(),
+            external_sku: firstVariant.sku || product.id?.toString(),
+            name: product.title,
+            description: product.body_html || "",
+            price,
+            currency,
+            stock,
+            status,
+            raw_data: product,
+            synced_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+
+          const { error: upsertError, data: upsertData } = await supabase
+            .from("channel_products_staging")
+            .upsert(payload, { onConflict: "channel_id,external_id" })
+            .select("id");
+
+          if (upsertError) {
+            throw new Error(upsertError.message);
+          }
+
+          // Heuristic: if upsert returned existing id, count updated; otherwise new
+          if (upsertData && upsertData.length === 1 && upsertData[0]) {
+            updatedProducts++;
+          } else {
+            newProducts++;
+          }
+        } catch (err: any) {
+          errors.push({ sku: product?.variants?.[0]?.sku, error: err.message });
+        }
+      }
+
+      await supabase
+        .from("channels")
+        .update({
+          status: errors.length ? "warning" : "connected",
+          last_error: errors.length ? errors[0].error : null,
+          last_sync_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", channelId);
+
+      await supabase
+        .from("sync_logs")
+        .insert([{
+          account_id,
+          channel_id: channelId,
+          event_type: "shopify_product_sync",
+          status: errors.length ? "warning" : "completed",
+          payload: {
+            source: "shopify",
+            new_products: newProducts,
+            updated_products: updatedProducts,
+            total_from_shopify: allProducts.length,
+            errors: errors.slice(0, 10)
+          }
+        }]);
+
+      return reply.send({
+        success: true,
+        new_products: newProducts,
+        updated_products: updatedProducts,
+        total_from_shopify: allProducts.length,
+        errors: errors.length ? errors.slice(0, 10) : undefined,
+        message: `${newProducts} nuevos, ${updatedProducts} actualizados de ${allProducts.length} productos`
+      });
+    } catch (error: any) {
+      console.error("Shopify sync error:", error);
+      return reply.status(500).send({ success: false, error: error.message });
+    }
+  });
+
   // GET /shopify/auth - Get Shopify OAuth URL
   app.get("/shopify/auth", async (req: FastifyRequest<{ Querystring: { account_id: string } }>, reply: FastifyReply) => {
     try {
