@@ -63,7 +63,7 @@ export async function shopifyRoutes(app: FastifyInstance) {
       const allProducts: any[] = [];
 
       while (nextUrl) {
-        const res = await fetch(nextUrl, { headers });
+        const res: Response = await fetch(nextUrl, { headers });
         if (!res.ok) {
           const text = await res.text();
           return reply.status(502).send({
@@ -77,12 +77,12 @@ export async function shopifyRoutes(app: FastifyInstance) {
         allProducts.push(...(data.products || []));
 
         // Parse Link header for next page
-        const linkHeader = res.headers.get("link");
+        const linkHeader: string | null = res.headers.get("link");
         if (linkHeader && linkHeader.includes('rel="next"')) {
-          const matches = linkHeader.split(",").map(s => s.trim());
-          const nextLink = matches.find(s => s.endsWith('rel="next"'));
+          const matches: string[] = linkHeader.split(",").map((s: string) => s.trim());
+          const nextLink: string | undefined = matches.find((s: string) => s.endsWith('rel="next"'));
           if (nextLink) {
-            const urlPart = nextLink.split(";")[0].replace(/<|>/g, "");
+            const urlPart: string = nextLink.split(";")[0].replace(/<|>/g, "");
             nextUrl = urlPart;
           } else {
             nextUrl = null;
